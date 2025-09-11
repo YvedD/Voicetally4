@@ -8,3 +8,5 @@
         <include domain="sharedpref" path="."/>
     </device-transfer>
 </data-extraction-rules>
+
+
