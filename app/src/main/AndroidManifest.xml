@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Permissies die je app gebruikt -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Alleen nodig als je notificaties wil tonen op Android 13+ -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Optioneel: declareer features (niet verplicht) -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+
+    <application
+        android:name=".VoiceTallyApp"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.VoiceTally4"
+        android:supportsRtl="true">
+
+        <!-- LAUNCHER activity: MOET exported=true hebben sinds Android 12 -->
+        <activity
+            android:name=".StartActiviteit"
+            android:exported="true"
+            android:theme="@style/Theme.VoiceTally4">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Andere activities/fragments zonder launcher-intent-filter hoeven niet in manifest.
+             Als je andere activities met intent-filter hebt, zet dan ook expliciet exported=... -->
+
+        <!-- NavHostFragment zit in layout; geen manifest entry nodig -->
+
+    </application>
+</manifest>

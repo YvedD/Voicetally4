@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Basiskleuren -->
+    <color name="vt4_black">#000000</color>
+    <color name="vt4_white">#FFFFFF</color>
+    <color name="vt4_light_gray">#F2F2F2</color>
+
+    <!-- Outline (mag je later aanpassen) -->
+    <color name="vt4_outline">#23993C</color>
+</resources>

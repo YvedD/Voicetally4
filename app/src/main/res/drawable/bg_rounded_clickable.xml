@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="?attr/colorControlHighlight">
+
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="@dimen/corner_radius_6"/>
+            <solid android:color="?attr/colorTappableBg"/>
+            <stroke
+                android:width="@dimen/tappable_stroke_1"
+                android:color="?attr/colorTappableOutline"/>
+        </shape>
+    </item>
+</ripple>

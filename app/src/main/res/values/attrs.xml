@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Custom themekleuren voor tappables (kan je per thema instellen) -->
+    <attr name="colorTappableBg" format="color" />
+    <attr name="colorTappableText" format="color" />
+    <attr name="colorTappableOutline" format="color" />
+</resources>

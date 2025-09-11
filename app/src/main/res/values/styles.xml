@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Globale 6dp afronding -->
+    <style name="ShapeAppearance.VoiceTally4.Rounded6" parent="ShapeAppearance.Material3.Corner.None">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">@dimen/corner_radius_6</item>
+    </style>
+
+    <!-- Buttons (M3 bestaat) -->
+    <style name="Widget.VoiceTally4.Button" parent="Widget.Material3.Button">
+        <item name="shapeAppearance">@style/ShapeAppearance.VoiceTally4.Rounded6</item>
+        <item name="backgroundTint">?attr/colorTappableBg</item>
+        <item name="android:textColor">?attr/colorTappableText</item>
+        <item name="strokeColor">?attr/colorTappableOutline</item>
+        <item name="strokeWidth">@dimen/tappable_stroke_1</item>
+        <item name="iconTint">?attr/colorTappableText</item>
+        <item name="rippleColor">?attr/colorControlHighlight</item>
+        <item name="android:minHeight">48dp</item>
+    </style>
+
+    <!-- “Outlined” variant: base op M3 Button; we forceren zelf de outline -->
+    <style name="Widget.VoiceTally4.Button.Outlined" parent="Widget.Material3.Button">
+        <item name="shapeAppearance">@style/ShapeAppearance.VoiceTally4.Rounded6</item>
+        <item name="backgroundTint">?attr/colorTappableBg</item>
+        <item name="android:textColor">?attr/colorTappableText</item>
+        <item name="strokeColor">?attr/colorTappableOutline</item>
+        <item name="strokeWidth">@dimen/tappable_stroke_1</item>
+        <item name="iconTint">?attr/colorTappableText</item>
+    </style>
+
+    <!-- Cards (M3 stijlnaam bestaat niet overal) → fallback naar M2 -->
+    <style name="Widget.VoiceTally4.Card" parent="Widget.MaterialComponents.CardView">
+        <item name="shapeAppearance">@style/ShapeAppearance.VoiceTally4.Rounded6</item>
+        <item name="cardBackgroundColor">?attr/colorTappableBg</item>
+        <item name="strokeColor">?attr/colorTappableOutline</item>
+        <item name="strokeWidth">@dimen/tappable_stroke_1</item>
+        <item name="rippleColor">?attr/colorControlHighlight</item>
+    </style>
+
+    <!-- TextInputLayout (Outlined) → veilige M2 parent -->
+    <style name="Widget.VoiceTally4.TextInputLayout" parent="Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+        <item name="shapeAppearance">@style/ShapeAppearance.VoiceTally4.Rounded6</item>
+        <item name="boxStrokeColor">?attr/colorTappableOutline</item>
+        <item name="boxStrokeWidth">@dimen/tappable_stroke_1</item>
+        <item name="boxStrokeWidthFocused">@dimen/tappable_stroke_1</item>
+    </style>
+
+    <!-- AutoCompleteTextView → veilige AppCompat parent -->
+    <style name="Widget.VoiceTally4.AutoCompleteTextView" parent="Widget.AppCompat.AutoCompleteTextView">
+        <item name="android:textColor">?attr/colorTappableText</item>
+        <item name="android:background">@drawable/bg_rounded_clickable</item>
+        <item name="android:paddingStart">12dp</item>
+        <item name="android:paddingEnd">12dp</item>
+        <item name="android:minHeight">48dp</item>
+    </style>
+
+    <!-- (Optioneel) TextInputLayout-stijl voor Exposed Dropdown Menu -->
+    <style name="Widget.VoiceTally4.TextInputLayout.ExposedDropdown"
+        parent="Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu">
+        <item name="shapeAppearance">@style/ShapeAppearance.VoiceTally4.Rounded6</item>
+        <item name="boxStrokeColor">?attr/colorTappableOutline</item>
+        <item name="boxStrokeWidth">@dimen/tappable_stroke_1</item>
+        <item name="boxStrokeWidthFocused">@dimen/tappable_stroke_1</item>
+    </style>
+
+    <!-- Spinner -->
+    <style name="Widget.VoiceTally4.Spinner" parent="Widget.AppCompat.Spinner">
+        <item name="android:background">@drawable/bg_rounded_clickable</item>
+        <item name="android:popupTheme">@style/ThemeOverlay.Material3.MaterialAlertDialog</item>
+        <item name="android:paddingStart">12dp</item>
+        <item name="android:paddingEnd">12dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:textColor">?attr/colorTappableText</item>
+    </style>
+
+</resources>
