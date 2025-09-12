@@ -54,7 +54,11 @@ class StartScherm : Fragment() {
                 val res = readAliasMappingCount()
                 when (res) {
                     is ReadResult.Success -> {
-                        Toast.makeText(requireContext(), "${res.count} soorten ingelezen", Toast.LENGTH_LONG).show()
+                        Toast.makeText(
+                            requireContext(),
+                            getString(R.string.species_count_loaded, res.count),
+                            Toast.LENGTH_LONG
+                        ).show()
                         findNavController().navigate(R.id.action_opstartScherm_to_soortSelectieScherm)
                     }
                     is ReadResult.Failure -> {
@@ -65,13 +69,13 @@ class StartScherm : Fragment() {
         }
 
         binding.btnTellingen.setOnClickListener {
-            Toast.makeText(requireContext(), "Tellingen (TODO navigatie)", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.tellingen), Toast.LENGTH_SHORT).show()
         }
         binding.btnInstellingen.setOnClickListener {
-            Toast.makeText(requireContext(), "Instellingen (TODO navigatie)", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.instellingen), Toast.LENGTH_SHORT).show()
         }
         binding.btnAliassen.setOnClickListener {
-            Toast.makeText(requireContext(), "Aliassen (TODO navigatie)", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.aliassen), Toast.LENGTH_SHORT).show()
         }
         binding.btnAfsluiten.setOnClickListener { requireActivity().finish() }
     }

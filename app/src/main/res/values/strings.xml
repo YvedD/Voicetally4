@@ -1,5 +1,6 @@
 <resources>
     <string name="app_name">VoiceTally4</string>
+    <string name="app_title">VoiceTally 4.0</string>
 
     <!-- Setup -->
     <string name="setup_title">Eenmalige setup</string>
@@ -19,4 +20,19 @@
     <string name="perm_notif_title">Notificaties toestaan?</string>
     <string name="perm_notif_rationale">We tonen optioneel meldingen (bijv. statusupdates van tellingen). Je kan dit ook later nog aanzetten in de systeeminstellingen.</string>
     <string name="perm_action_allow">Toestaan</string>
+
+    <!-- Startscherm -->
+    <string name="start_telling">Start telling</string>
+    <string name="tellingen">Tellingen</string>
+    <string name="instellingen">Instellingen</string>
+    <string name="aliassen">Aliassen</string>
+    <string name="afsluiten">Afsluiten</string>
+    <string name="species_count_loaded">%1$d soorten ingelezen</string>
+
+    <!-- Soortselectie -->
+    <string name="soortselectie_title">soortselectie</string>
+    <string name="ok">OK</string>
+    <string name="empty_alias_hint">Geen aliassen gevonden. Plaats aliasmapping.csv in /Documents/VoiceTally4/assets.</string>
+    <string name="chosen_species_prefix">gekozen soorten : %1$s</string>
+    <string name="chosen_species_none">gekozen soorten : (geen)</string>
 </resources>

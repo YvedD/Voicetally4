@@ -13,6 +13,7 @@ import com.google.android.flexbox.FlexWrap
 import com.google.android.flexbox.FlexboxLayoutManager
 import com.google.android.flexbox.JustifyContent
 import com.google.android.material.snackbar.Snackbar
+import com.yvesds.voicetally4.R
 import com.yvesds.voicetally4.databinding.FragmentSoortSelectieSchermBinding
 import com.yvesds.voicetally4.ui.adapters.AliasTileAdapter
 import com.yvesds.voicetally4.ui.core.SetupManager
@@ -86,10 +87,12 @@ class SoortSelectieScherm : Fragment() {
                 .filter { selectedTiles.contains(it.tileName) }
                 .map { it.canonical }
                 .toList()
+
             val msg = if (chosenCanonical.isEmpty())
-                "gekozen soorten : (geen)"
+                getString(R.string.chosen_species_none)
             else
-                "gekozen soorten : " + chosenCanonical.joinToString(", ")
+                getString(R.string.chosen_species_prefix, chosenCanonical.joinToString(", "))
+
             Snackbar.make(binding.root, msg, Snackbar.LENGTH_SHORT).show()
             // TODO: navigeer naar tally-scherm met chosenCanonical + evt. soortId/tileName
         }
@@ -148,10 +151,12 @@ class SoortSelectieScherm : Fragment() {
             .filter { selectedTiles.contains(it.tileName) }
             .map { it.canonical }
             .toList()
+
         val msg = if (canonicalList.isEmpty())
-            "gekozen soorten : (geen)"
+            getString(R.string.chosen_species_none)
         else
-            "gekozen soorten : " + canonicalList.joinToString(", ")
+            getString(R.string.chosen_species_prefix, canonicalList.joinToString(", "))
+
         Snackbar.make(binding.root, msg, Snackbar.LENGTH_SHORT).show()
     }
 

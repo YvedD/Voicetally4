@@ -23,7 +23,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="soortselectie"
+            android:text="@string/soortselectie_title"
             android:textAppearance="@style/TextAppearance.Material3.TitleMedium" />
 
         <com.google.android.material.button.MaterialButton
@@ -32,7 +32,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:minHeight="40dp"
-            android:text="OK" />
+            android:text="@string/ok" />
     </LinearLayout>
 
     <!-- Supersnelle scrollbare tiles (RecyclerView) -->
@@ -49,7 +49,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:paddingTop="8dp"
-        android:text="Geen aliassen gevonden. Plaats aliasmapping.csv in /Documents/VoiceTally4/assets."
+        android:text="@string/empty_alias_hint"
         android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
         android:visibility="gone" />
 </LinearLayout>
