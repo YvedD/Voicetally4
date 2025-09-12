@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Geselecteerd: lichtblauw -->
+    <item android:color="@color/vt4_light_blue" android:state_checked="true"/>
+    <!-- Normaal: thema tappable bg (zwart) -->
+    <item android:color="?attr/colorTappableBg"/>
+</selector>

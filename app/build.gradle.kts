@@ -76,9 +76,13 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.activity:activity-ktx:1.11.0")
     implementation("androidx.fragment:fragment-ktx:1.8.8")
+    implementation("androidx.recyclerview:recyclerview:1.3.2") // ← nodig voor RecyclerView
     implementation("androidx.coordinatorlayout:coordinatorlayout:1.3.0")
 
-    // SAF DocumentFile API (vereist voor DocumentFile.* in SetupManager)
+    // FlexboxLayoutManager voor “wrapping” tiles
+    implementation("com.google.android.flexbox:flexbox:3.0.0") // ← nodig voor Flexbox
+
+    // SAF DocumentFile
     implementation("androidx.documentfile:documentfile:1.1.0")
 
     // Lifecycle

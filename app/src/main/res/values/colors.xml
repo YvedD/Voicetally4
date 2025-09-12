@@ -5,6 +5,9 @@
     <color name="vt4_white">#FFFFFF</color>
     <color name="vt4_light_gray">#F2F2F2</color>
 
-    <!-- Outline (mag je later aanpassen) -->
+    <!-- Outline -->
     <color name="vt4_outline">#23993C</color>
+
+    <!-- Nieuw: geselecteerde tile-achtergrond -->
+    <color name="vt4_light_blue">#3399FF</color>
 </resources>

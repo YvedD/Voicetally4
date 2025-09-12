@@ -14,8 +14,6 @@
     <string name="perm_denied_title">Permissies nodig</string>
     <string name="perm_denied_msg">Volgende permissies zijn geweigerd: %1$s</string>
     <string name="try_again">Opnieuw proberen</string>
-
-    <!-- (Uit je StartScherm, behouden) -->
     <string name="perm_denied_core">Nodige permissies (spraak/locatie) niet toegestaan.</string>
     <string name="perm_denied_notifications">Notificatie-toestemming geweigerd.</string>
     <string name="perm_notif_title">Notificaties toestaan?</string>

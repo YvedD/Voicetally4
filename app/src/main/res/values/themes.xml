@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Altijd donkere, consistente thema-instellingen (geen DayNight). -->
-    <style name="Theme.VoiceTally4" parent="Theme.Material3">
+    <style name="Theme.VoiceTally4" parent="Theme.Material3.DayNight">
         <!-- Actiebar uit -->
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>

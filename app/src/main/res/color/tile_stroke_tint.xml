@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Je outline blijft hetzelfde, ook bij checked -->
+    <item android:color="@color/vt4_outline" android:state_checked="true"/>
+    <item android:color="@color/vt4_outline"/>
+</selector>

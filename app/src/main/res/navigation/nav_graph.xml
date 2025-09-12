@@ -19,5 +19,15 @@
         android:id="@+id/opstartScherm"
         android:name="com.yvesds.voicetally4.ui.schermen.StartScherm"
         android:label="Opstart"
-        tools:layout="@layout/fragment_opstart_scherm" />
+        tools:layout="@layout/fragment_opstart_scherm">
+        <action
+            android:id="@+id/action_opstartScherm_to_soortSelectieScherm"
+            app:destination="@id/soortSelectieScherm" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/soortSelectieScherm"
+        android:name="com.yvesds.voicetally4.ui.schermen.SoortSelectieScherm"
+        android:label="Soortselectie"
+        tools:layout="@layout/fragment_soort_selectie_scherm" />
 </navigation>
