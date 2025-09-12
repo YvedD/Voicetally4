@@ -1,4 +1,4 @@
-package com.yvesds.voicetally4.ui.start
+package com.yvesds.voicetally4.ui.schermen
 
 import android.Manifest
 import android.content.pm.PackageManager

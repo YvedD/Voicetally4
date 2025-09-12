@@ -1,4 +1,4 @@
-package com.yvesds.voicetally4.di
+package com.yvesds.voicetally4.ui.di
 
 import android.content.Context
 import android.content.SharedPreferences
