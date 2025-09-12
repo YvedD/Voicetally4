@@ -1,7 +1,11 @@
-// /build.gradle.kts
 plugins {
     id("com.android.application") version "8.10.1" apply false
-    kotlin("android") version "2.0.20" apply false
-    // kapt versie volgt Kotlin, maar je hoeft 'm hier niet expliciet te declareren
-    id("com.google.dagger.hilt.android") version "2.51.1" apply false
+    id("org.jetbrains.kotlin.android") version "2.2.20" apply false
+    id("com.google.dagger.hilt.android") version "2.57.1" apply false
+    id("com.google.devtools.ksp") version "2.2.20-2.0.2" apply false
+}
+
+tasks.register("clean", Delete::class) {
+    // vervangt deprecated buildDir getter
+    delete(layout.buildDirectory)
 }

@@ -1,3 +1,24 @@
 <resources>
     <string name="app_name">VoiceTally4</string>
+
+    <!-- Setup -->
+    <string name="setup_title">Eenmalige setup</string>
+    <string name="setup_subtitle">We vragen noodzakelijke permissies en kiezen je Documenten-map om de VoiceTally4-mappen aan te maken.</string>
+    <string name="setup_button">Setup starten</string>
+    <string name="setup_done">Setup voltooid!</string>
+    <string name="setup_saf_cancelled">Geen map geselecteerd. Setup geannuleerd.</string>
+    <string name="setup_error_title">Setup mislukt</string>
+    <string name="setup_error_fallback">Er trad een fout op tijdens het aanmaken van mappen.</string>
+
+    <!-- Permissions -->
+    <string name="perm_denied_title">Permissies nodig</string>
+    <string name="perm_denied_msg">Volgende permissies zijn geweigerd: %1$s</string>
+    <string name="try_again">Opnieuw proberen</string>
+
+    <!-- (Uit je StartScherm, behouden) -->
+    <string name="perm_denied_core">Nodige permissies (spraak/locatie) niet toegestaan.</string>
+    <string name="perm_denied_notifications">Notificatie-toestemming geweigerd.</string>
+    <string name="perm_notif_title">Notificaties toestaan?</string>
+    <string name="perm_notif_rationale">We tonen optioneel meldingen (bijv. statusupdates van tellingen). Je kan dit ook later nog aanzetten in de systeeminstellingen.</string>
+    <string name="perm_action_allow">Toestaan</string>
 </resources>

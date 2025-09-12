@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
-    <!-- Back-up alles behalve cache -->
-    <exclude domain="cache" path="."/>
+    <!-- Legacy/full backup regels (onder Android 11 en lager) -->
+    <include domain="sharedpref" path="." />
+    <include domain="file" path="." />
+
+    <exclude domain="cache" path="." />
+    <exclude domain="file" path="no_backup/" />
 </full-backup-content>

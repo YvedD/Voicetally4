@@ -1,12 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
+    <!-- Regels voor Google Drive-backup -->
     <cloud-backup>
-        <include domain="sharedpref" path="."/>
-        <exclude domain="cache" path="."/>
+        <!-- Neem alle SharedPreferences mee (app-instellingen e.d.) -->
+        <include domain="sharedpref" path="." />
+        <!-- Neem eigen bestanden mee behalve no_backup/ -->
+        <include domain="file" path="." />
+        <!-- Sluit caches en no_backup uit -->
+        <exclude domain="cache" path="." />
+        <exclude domain="file" path="no_backup/" />
+        <!-- Externe opslag wordt normaliter niet geback-upt -->
     </cloud-backup>
+
+    <!-- Regels voor toestel-naar-toestel transfer -->
     <device-transfer>
-        <include domain="sharedpref" path="."/>
+        <include domain="sharedpref" path="." />
+        <include domain="file" path="." />
+        <exclude domain="cache" path="." />
+        <exclude domain="file" path="no_backup/" />
     </device-transfer>
 </data-extraction-rules>
-
-

@@ -1,34 +1,35 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.VoiceTally4" parent="Theme.Material3.DayNight">
+    <!-- Altijd donkere, consistente thema-instellingen (geen DayNight). -->
+    <style name="Theme.VoiceTally4" parent="Theme.Material3">
         <!-- Actiebar uit -->
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
 
-        <!-- Venster / systeem bars -->
+        <!-- Venster / systeem bars (donker; witte iconen/tekst) -->
         <item name="android:windowBackground">@color/vt4_black</item>
         <item name="android:statusBarColor">@color/vt4_black</item>
         <item name="android:navigationBarColor">@color/vt4_black</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
 
-        <!-- Material 3 surfaces -->
+        <!-- Material3 surfaces -->
         <item name="colorSurface">@color/vt4_black</item>
         <item name="colorOnSurface">@color/vt4_white</item>
 
-        <!-- Tekst overal wit (framework views) -->
+        <!-- Tekst overal wit; hints altijd lichtgrijs op zwart -->
         <item name="android:textColorPrimary">@color/vt4_white</item>
         <item name="android:textColorSecondary">@color/vt4_white</item>
-        <item name="android:textColorHint">@color/vt4_white</item>
+        <item name="android:textColorHint">@color/vt4_light_gray</item>
         <item name="colorControlNormal">@color/vt4_white</item>
         <item name="colorControlActivated">@color/vt4_white</item>
 
-        <!-- Tappable kleuren -->
+        <!-- Tappable kleuren (zwart bg, witte tekst, groene outline) -->
         <item name="colorTappableBg">@color/vt4_black</item>
         <item name="colorTappableText">@color/vt4_white</item>
         <item name="colorTappableOutline">@color/vt4_outline</item>
 
-        <!-- Koppel jouw widget-stijlen -->
+        <!-- Koppel widget-stijlen -->
         <item name="materialButtonStyle">@style/Widget.VoiceTally4.Button</item>
         <item name="materialButtonOutlinedStyle">@style/Widget.VoiceTally4.Button.Outlined</item>
         <item name="materialCardViewStyle">@style/Widget.VoiceTally4.Card</item>

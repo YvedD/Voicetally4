@@ -3,10 +3,20 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/nav_graph"
-    app:startDestination="@id/opstartSchermFragment">
+    app:startDestination="@id/eersteSetupScherm">
 
     <fragment
-        android:id="@+id/opstartSchermFragment"
+        android:id="@+id/eersteSetupScherm"
+        android:name="com.yvesds.voicetally4.ui.schermen.EersteSetupScherm"
+        android:label="Eerste Setup"
+        tools:layout="@layout/fragment_eerste_setup_scherm">
+        <action
+            android:id="@+id/action_eersteSetupScherm_to_opstartScherm"
+            app:destination="@id/opstartScherm" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/opstartScherm"
         android:name="com.yvesds.voicetally4.ui.schermen.StartScherm"
         android:label="Opstart"
         tools:layout="@layout/fragment_opstart_scherm" />

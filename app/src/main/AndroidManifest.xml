@@ -2,18 +2,22 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permissies die je app gebruikt -->
+    <!-- Permissies -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Alleen nodig als je notificaties wil tonen op Android 13+ -->
+    <!-- Android 13+ runtime permission -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Optioneel: declareer features (niet verplicht) -->
-    <uses-feature android:name="android.hardware.microphone" android:required="false" />
-    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <!-- Optioneel: hardware features (niet verplicht) -->
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.location.gps"
+        android:required="false" />
 
     <application
         android:name=".VoiceTallyApp"
@@ -22,10 +26,10 @@
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:theme="@style/Theme.VoiceTally4"
-        android:supportsRtl="true">
+        android:supportsRtl="true"
+        android:theme="@style/Theme.VoiceTally4">
 
-        <!-- LAUNCHER activity: MOET exported=true hebben sinds Android 12 -->
+        <!-- LAUNCHER activity (Android 12+: exported verplicht) -->
         <activity
             android:name=".StartActiviteit"
             android:exported="true"
@@ -36,10 +40,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Andere activities/fragments zonder launcher-intent-filter hoeven niet in manifest.
-             Als je andere activities met intent-filter hebt, zet dan ook expliciet exported=... -->
-
-        <!-- NavHostFragment zit in layout; geen manifest entry nodig -->
+        <!-- NavHostFragment zit in de layout; geen manifest entry nodig -->
 
     </application>
 </manifest>
