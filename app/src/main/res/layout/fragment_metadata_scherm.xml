@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/rootCard"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:layout_marginTop="30dp"
+    android:layout_marginBottom="30dp"
+    android:padding="16dp"
+    app:cardUseCompatPadding="true"
+    app:strokeColor="?attr/colorTappableOutline"
+    app:strokeWidth="@dimen/tappable_stroke_1">
+
+    <!-- Scrollt alleen indien nodig; inhoud zit volledig binnen de groene card -->
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/rootScroll"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:id="@+id/content"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="?attr/colorSurface"
+            android:orientation="vertical"
+            android:padding="0dp">
+
+            <!-- Header: titel + actieknoppen -->
+            <LinearLayout
+                android:id="@+id/headerBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingBottom="8dp"
+                android:baselineAligned="false">
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/tvTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/meta_title"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAnnuleer"
+                    style="@style/Widget.VoiceTally4.Button.Outlined"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minHeight="40dp"
+                    android:text="@string/annuleer" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnVerder"
+                    style="@style/Widget.VoiceTally4.Button.Outlined"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minHeight="40dp"
+                    android:layout_marginStart="8dp"
+                    android:text="@string/verder" />
+            </LinearLayout>
+
+            <!-- Waarnemer -->
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.VoiceTally4.TextInputLayout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/meta_waarnemer">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etWaarnemer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="textPersonName"
+                    android:maxLines="1" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- Project (Exposed Dropdown) -->
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.VoiceTally4.TextInputLayout.ExposedDropdown"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/meta_project">
+
+                <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                    android:id="@+id/acProject"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- Locatie type (Exposed Dropdown) -->
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.VoiceTally4.TextInputLayout.ExposedDropdown"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/meta_locatie_type">
+
+                <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                    android:id="@+id/acLocatieType"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- Datum en Tijd -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnDatum"
+                    style="@style/Widget.VoiceTally4.Button.Outlined"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:minHeight="48dp"
+                    android:text="@string/meta_datum" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnTijd"
+                    style="@style/Widget.VoiceTally4.Button.Outlined"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:minHeight="48dp"
+                    android:layout_marginStart="8dp"
+                    android:text="@string/meta_tijd" />
+            </LinearLayout>
+
+            <!-- Weer (Exposed Dropdown) -->
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.VoiceTally4.TextInputLayout.ExposedDropdown"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/meta_weer">
+
+                <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                    android:id="@+id/acWeer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- Methode (Exposed Dropdown) -->
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.VoiceTally4.TextInputLayout.ExposedDropdown"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/meta_methode">
+
+                <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                    android:id="@+id/acMethode"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- Opmerkingen -->
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.VoiceTally4.TextInputLayout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/meta_opmerkingen">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etOpmerkingen"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minLines="3"
+                    android:gravity="top"
+                    android:inputType="textMultiLine" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+</com.google.android.material.card.MaterialCardView>

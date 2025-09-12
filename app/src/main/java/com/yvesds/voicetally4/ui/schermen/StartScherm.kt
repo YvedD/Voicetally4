@@ -18,11 +18,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
-/**
- * StartScherm:
- * - Permissies + SAF-setup gebeuren in EersteSetupScherm.
- * - Bij 'Start telling': tel CSV-regels en navigeer daarna naar SoortSelectieScherm.
- */
 @AndroidEntryPoint
 class StartScherm : Fragment() {
 
@@ -59,7 +54,7 @@ class StartScherm : Fragment() {
                             getString(R.string.species_count_loaded, res.count),
                             Toast.LENGTH_LONG
                         ).show()
-                        findNavController().navigate(R.id.action_opstartScherm_to_soortSelectieScherm)
+                        findNavController().navigate(R.id.action_opstartScherm_to_metadataScherm)
                     }
                     is ReadResult.Failure -> {
                         Toast.makeText(requireContext(), res.message, Toast.LENGTH_LONG).show()

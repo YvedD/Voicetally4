@@ -21,7 +21,17 @@
         android:label="Opstart"
         tools:layout="@layout/fragment_opstart_scherm">
         <action
-            android:id="@+id/action_opstartScherm_to_soortSelectieScherm"
+            android:id="@+id/action_opstartScherm_to_metadataScherm"
+            app:destination="@id/metadataScherm" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/metadataScherm"
+        android:name="com.yvesds.voicetally4.ui.schermen.MetadataScherm"
+        android:label="Metadata"
+        tools:layout="@layout/fragment_metadata_scherm">
+        <action
+            android:id="@+id/action_metadataScherm_to_soortSelectieScherm"
             app:destination="@id/soortSelectieScherm" />
     </fragment>
 

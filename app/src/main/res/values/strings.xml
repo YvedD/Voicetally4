@@ -35,4 +35,19 @@
     <string name="empty_alias_hint">Geen aliassen gevonden. Plaats aliasmapping.csv in /Documents/VoiceTally4/assets.</string>
     <string name="chosen_species_prefix">gekozen soorten : %1$s</string>
     <string name="chosen_species_none">gekozen soorten : (geen)</string>
+
+    <!-- Metadata -->
+    <string name="meta_title">basisgegevens</string>
+    <string name="annuleer">Annuleer</string>
+    <string name="verder">Verder</string>
+    <string name="meta_waarnemer">waarnemer</string>
+    <string name="meta_project">project</string>
+    <string name="meta_locatie_type">locatie</string>
+    <string name="meta_datum">datum</string>
+    <string name="meta_tijd">tijd</string>
+    <string name="meta_weer">weer</string>
+    <string name="meta_methode">methode</string>
+    <string name="meta_opmerkingen">opmerkingen</string>
+    <string name="meta_kies_datum_title">Kies datum</string>
+    <string name="meta_kies_tijd_title">Kies tijd</string>
 </resources>
