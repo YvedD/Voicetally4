@@ -4,7 +4,8 @@
     android:id="@+id/rootCard"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:layout_margin="45dp"
+    android:layout_marginTop="30dp"
+    android:layout_marginBottom="50dp"
     android:padding="16dp"
     app:cardUseCompatPadding="true"
     app:strokeColor="?attr/colorTappableOutline"
@@ -24,7 +25,8 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:text="@string/app_title"
-            android:textAppearance="@style/TextAppearance.Material3.TitleLarge" />
+            android:textAppearance="@style/TextAppearance.Material3.TitleLarge"
+            android:textColor="#A9ADAF" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnStartTelling"
@@ -35,6 +37,7 @@
             android:layout_marginVertical="6dp"
             android:minHeight="64dp"
             android:text="@string/start_telling"
+            android:textSize="18dp"
             app:rippleColor="?attr/colorControlHighlight" />
 
         <com.google.android.material.button.MaterialButton
@@ -45,7 +48,8 @@
             android:layout_marginHorizontal="20dp"
             android:layout_marginVertical="6dp"
             android:minHeight="64dp"
-            android:text="@string/tellingen" />
+            android:text="@string/tellingen"
+            android:textSize="18dp" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnInstellingen"
@@ -55,7 +59,8 @@
             android:layout_marginHorizontal="20dp"
             android:layout_marginVertical="6dp"
             android:minHeight="64dp"
-            android:text="@string/instellingen" />
+            android:text="@string/instellingen"
+            android:textSize="18dp" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnAliassen"
@@ -65,7 +70,8 @@
             android:layout_marginHorizontal="20dp"
             android:layout_marginVertical="6dp"
             android:minHeight="64dp"
-            android:text="@string/aliassen" />
+            android:text="@string/aliassen"
+            android:textSize="18dp" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnAfsluiten"
@@ -75,6 +81,15 @@
             android:layout_marginHorizontal="20dp"
             android:layout_marginVertical="12dp"
             android:minHeight="64dp"
-            android:text="@string/afsluiten" />
+            android:text="@string/afsluiten"
+            android:textSize="18dp" />
+
+        <TextView
+            android:id="@+id/textView"
+            android:layout_width="match_parent"
+            android:layout_height="173dp"
+            android:layout_marginHorizontal="16dp"
+            android:text="Deze versie van VoiceTally ondersteunt uploads naar de server van trektellen.nl. Meerdere aanpassingen volgen nog" />
+
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

@@ -15,6 +15,7 @@ import com.yvesds.voicetally4.databinding.FragmentOpstartSchermBinding
 import com.yvesds.voicetally4.ui.core.SetupManager
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
@@ -33,9 +34,8 @@ class StartScherm : Fragment() {
     }
 
     override fun onCreateView(
-        inflater: LayoutInflater,
-        container: ViewGroup?,
-        savedInstanceState: Bundle?
+        inflater: LayoutInflater, container: ViewGroup?,
+        savedInstanceState: Bundle?,
     ): View {
         _binding = FragmentOpstartSchermBinding.inflate(inflater, container, false)
         return binding.root
@@ -45,9 +45,9 @@ class StartScherm : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         binding.btnStartTelling.setOnClickListener {
-            viewLifecycleOwner.lifecycleScope.launchWhenStarted {
-                val res = readAliasMappingCount()
-                when (res) {
+            // launchWhenStarted -> vervangen door een gewone launch (one-shot actie na klik)
+            viewLifecycleOwner.lifecycleScope.launch {
+                when (val res = readAliasMappingCount()) {
                     is ReadResult.Success -> {
                         Toast.makeText(
                             requireContext(),
@@ -72,23 +72,25 @@ class StartScherm : Fragment() {
         binding.btnAliassen.setOnClickListener {
             Toast.makeText(requireContext(), getString(R.string.aliassen), Toast.LENGTH_SHORT).show()
         }
-        binding.btnAfsluiten.setOnClickListener { requireActivity().finish() }
+        binding.btnAfsluiten.setOnClickListener {
+            requireActivity().finish()
+        }
     }
 
     private suspend fun readAliasMappingCount(): ReadResult = withContext(Dispatchers.IO) {
         try {
             val treeUri = setupManager.getPersistedTreeUri()
-                ?: return@withContext ReadResult.Failure("Documentroot niet ingesteld. Voer eerst de setup uit.")
+                ?: return@withContext ReadResult.Failure("Documentroot niet ingesteld.\nVoer eerst de setup uit.")
             if (!setupManager.hasPersistedPermission(treeUri)) {
                 return@withContext ReadResult.Failure("Toegang tot Documenten vervallen. Voer de setup opnieuw uit.")
             }
+
             val docsTree = DocumentFile.fromTreeUri(requireContext(), treeUri)
                 ?: return@withContext ReadResult.Failure("Kon de Documenten-map niet openen.")
             val appRoot = docsTree.findFile("VoiceTally4")?.takeIf { it.isDirectory }
-                ?: return@withContext ReadResult.Failure("Map 'VoiceTally4' niet gevonden. Voer de setup opnieuw uit.")
+                ?: return@withContext ReadResult.Failure("Map 'VoiceTally4' niet gevonden.\nVoer de setup opnieuw uit.")
             val assetsDir = appRoot.findFile("assets")?.takeIf { it.isDirectory }
-                ?: return@withContext ReadResult.Failure("Map 'assets' niet gevonden. Voer de setup opnieuw uit.")
-
+                ?: return@withContext ReadResult.Failure("Map 'assets' niet gevonden.\nVoer de setup opnieuw uit.")
             val aliasFile = assetsDir.listFiles()
                 .firstOrNull { it.name?.equals("aliasmapping.csv", ignoreCase = true) == true }
                 ?: return@withContext ReadResult.Failure("Bestand 'aliasmapping.csv' niet gevonden in 'assets'.")
@@ -96,8 +98,14 @@ class StartScherm : Fragment() {
             requireContext().contentResolver.openInputStream(aliasFile.uri).use { input ->
                 if (input == null) return@withContext ReadResult.Failure("Kon 'aliasmapping.csv' niet openen.")
                 input.bufferedReader(Charsets.UTF_8).use { reader ->
-                    val allLines = reader.readLines().asSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+                    val allLines = reader.readLines()
+                        .asSequence()
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                        .toList()
+
                     if (allLines.isEmpty()) return@use ReadResult.Success(0)
+
                     val first = allLines.first().lowercase()
                     val hasHeader = "alias" in first || "soort" in first || first.startsWith("#")
                     val count = if (hasHeader) allLines.size - 1 else allLines.size
