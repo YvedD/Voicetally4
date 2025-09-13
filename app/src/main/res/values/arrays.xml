@@ -1,26 +1,93 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string-array name="vt4_project_opties">
-        <item>Alle soorten</item>
-        <item>Zeetrek</item>
-        <item>Ooievaars en roofvogels</item>
+    <!-- Type telling (vervangt 'project') -->
+    <string-array name="vt4_type_telling_opties">
+        <item>alle soorten</item>
+        <item>zeetrek</item>
+        <item>ooievaars en roofvogels</item>
     </string-array>
 
+    <!-- Locatie type -->
     <string-array name="vt4_locatie_type_opties">
         <item>gps</item>
         <item>handmatig</item>
     </string-array>
 
-    <string-array name="vt4_weer_opties">
-        <item>helder</item>
-        <item>bewolkt</item>
-        <item>regen</item>
-        <item>wind</item>
+    <!-- Telpost labels & codes -->
+    <string-array name="vt4_telpost_labels">
+        <item>Spanjaardduinen</item>
+        <item>Duinbrug</item>
+        <item>Bufferbekken Bredene</item>
+        <item>VoiceTally Testsite</item>
     </string-array>
 
-    <string-array name="vt4_methode_opties">
-        <item>punt</item>
-        <item>transect</item>
-        <item>gebied</item>
+    <string-array name="vt4_telpost_values">
+        <item>4310</item>
+        <item>79</item>
+        <item>3745</item>
+        <item>5177</item>
+    </string-array>
+
+    <!-- Windrichtingen -->
+    <string-array name="vt4_windrichting_opties">
+        <item>N</item>
+        <item>NNO</item>
+        <item>NO</item>
+        <item>ONO</item>
+        <item>O</item>
+        <item>OZO</item>
+        <item>ZO</item>
+        <item>ZZO</item>
+        <item>Z</item>
+        <item>ZZW</item>
+        <item>ZW</item>
+        <item>WZW</item>
+        <item>W</item>
+        <item>WNW</item>
+        <item>NW</item>
+        <item>NNW</item>
+    </string-array>
+
+    <!-- Bewolking (achtsten) -->
+    <string-array name="vt4_bewolking_achtsten">
+        <item>0/8</item>
+        <item>1/8</item>
+        <item>2/8</item>
+        <item>3/8</item>
+        <item>4/8</item>
+        <item>5/8</item>
+        <item>6/8</item>
+        <item>7/8</item>
+        <item>8/8</item>
+    </string-array>
+
+    <!-- Neerslag -->
+    <string-array name="vt4_neerslag_opties">
+        <item>geen</item>
+        <item>regen</item>
+        <item>motregen</item>
+        <item>mist</item>
+        <item>hagel</item>
+        <item>sneeuw</item>
+        <item>sneeuw- of zandstorm</item>
+        <item>onweer</item>
+    </string-array>
+
+    <!-- Windkracht (Beaufort) -->
+    <string-array name="vt4_windkracht_beaufort">
+        <item>var</item>
+        <item>&lt;1bf</item>
+        <item>1bf</item>
+        <item>2bf</item>
+        <item>3bf</item>
+        <item>4bf</item>
+        <item>5bf</item>
+        <item>6bf</item>
+        <item>7bf</item>
+        <item>8bf</item>
+        <item>9bf</item>
+        <item>10bf</item>
+        <item>11bf</item>
+        <item>&gt;11bf</item>
     </string-array>
 </resources>
