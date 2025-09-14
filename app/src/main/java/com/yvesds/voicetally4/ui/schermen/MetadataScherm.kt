@@ -1,15 +1,11 @@
 package com.yvesds.voicetally4.ui.schermen
 
 import android.Manifest
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
-import android.os.Build
 import android.os.Bundle
-import android.util.TypedValue
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -31,13 +27,19 @@ import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.google.android.material.datepicker.MaterialDatePicker
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 import com.yvesds.voicetally4.R
 import com.yvesds.voicetally4.databinding.FragmentMetadataSchermBinding
 import com.yvesds.voicetally4.ui.data.MetadataForm
-import com.yvesds.voicetally4.utils.weather.WeatherManager
+import com.yvesds.voicetally4.utils.io.StorageUtils
+import com.yvesds.voicetally4.utils.net.ApiResponse
+import com.yvesds.voicetally4.utils.net.CredentialsStore
+import com.yvesds.voicetally4.utils.net.TrektellenApi
+import com.yvesds.voicetally4.utils.upload.CountsPayloadBuilder
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import org.json.JSONArray
-import org.json.JSONObject
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -50,31 +52,30 @@ class MetadataScherm : Fragment() {
     private var _binding: FragmentMetadataSchermBinding? = null
     private val binding get() = _binding!!
 
-    private lateinit var weatherManager: WeatherManager
+    private lateinit var weatherManager: com.yvesds.voicetally4.utils.weather.WeatherManager
+    private lateinit var credentialsStore: CredentialsStore
+    private val api by lazy { TrektellenApi() }
+
+    // Datum/tijd state
+    private var selectedDate: LocalDate = LocalDate.now()
+    private var selectedTimeHHmm: String = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
+
+    // Prefs: onthoud laatste telpost
+    private val prefsName = "metadata_prefs"
+    private val keyLastTelpostCode = "last_telpost_code"
 
     // Formatters
     private val dateFmt = DateTimeFormatter.ISO_LOCAL_DATE
     private val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
 
-    // Datum/tijd state (geen afronding)
-    private var selectedDate: LocalDate = LocalDate.now()
-    private var selectedTimeHHmm: String = LocalTime.now().format(timeFmt)
-
-    // Prefs
-    private val prefsName = "metadata_prefs"
-    private val keyLastTelpostCode = "last_telpost_code"
-
-    // Export preview storage
-    private val exportPrefsName = "export_prefs"
-    private val keyLastPreviewJson = "last_preview_json"
-
-    // Permissions
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
         val granted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
                 result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        if (granted) updateWeatherFromDeviceLocation()
+        if (granted) {
+            updateWeatherFromDeviceLocation()
+        }
     }
 
     override fun onCreateView(
@@ -82,15 +83,14 @@ class MetadataScherm : Fragment() {
         savedInstanceState: Bundle?,
     ): View {
         _binding = FragmentMetadataSchermBinding.inflate(inflater, container, false)
-        weatherManager = WeatherManager(requireContext().applicationContext)
+        weatherManager = com.yvesds.voicetally4.utils.weather.WeatherManager(requireContext().applicationContext)
+        credentialsStore = CredentialsStore(requireContext().applicationContext)
         return binding.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
         applySystemBarInsets()
-
         setupDateField()
         setupTimePickerDialog()
         setupTelpostSpinner()
@@ -101,7 +101,6 @@ class MetadataScherm : Fragment() {
         setupBottomBar()
     }
 
-    /** Zorgt dat bottomBar boven de systeem-navigatiebalk blijft. */
     private fun applySystemBarInsets() {
         ViewCompat.setOnApplyWindowInsetsListener(binding.rootConstraint) { _, insets ->
             val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -134,7 +133,7 @@ class MetadataScherm : Fragment() {
 
     // endregion
 
-    // region Tijd (custom popup met twee spinners)
+    // region Tijd
 
     private fun setupTimePickerDialog() {
         binding.etTijd.setText(selectedTimeHHmm)
@@ -142,7 +141,11 @@ class MetadataScherm : Fragment() {
     }
 
     private fun openTimeSpinnerDialog() {
-        val current = try { LocalTime.parse(selectedTimeHHmm, timeFmt) } catch (_: Exception) { LocalTime.now() }
+        val current = try {
+            LocalTime.parse(selectedTimeHHmm, timeFmt)
+        } catch (_: Exception) {
+            LocalTime.now()
+        }
 
         val container = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -150,18 +153,23 @@ class MetadataScherm : Fragment() {
         }
 
         val hourPicker = NumberPicker(requireContext()).apply {
-            minValue = 0; maxValue = 23; value = current.hour; wrapSelectorWheel = true
+            minValue = 0
+            maxValue = 23
+            value = current.hour
+            wrapSelectorWheel = true
             setFormatter { String.format(Locale.getDefault(), "%02d", it) }
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
 
         val minutePicker = NumberPicker(requireContext()).apply {
-            minValue = 0; maxValue = 59; value = current.minute; wrapSelectorWheel = true
+            minValue = 0
+            maxValue = 59
+            value = current.minute
+            wrapSelectorWheel = true
             setFormatter { String.format(Locale.getDefault(), "%02d", it) }
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
 
-        // 59 -> 00 verhoogt uur; 00 -> 59 verlaagt uur
         minutePicker.setOnValueChangedListener { _, oldVal, newVal ->
             if (oldVal == 59 && newVal == 0) hourPicker.value = (hourPicker.value + 1) % 24
             else if (oldVal == 0 && newVal == 59) hourPicker.value = (hourPicker.value + 23) % 24
@@ -195,9 +203,12 @@ class MetadataScherm : Fragment() {
         val savedCode = prefs.getString(keyLastTelpostCode, null)
 
         val defaultIndex = labels.indexOf("VoiceTally Testsite").let { if (it >= 0) it else labels.lastIndex }
-        val startIndex = savedCode?.let { values.indexOf(it).takeIf { i -> i >= 0 } } ?: defaultIndex
+        val startIndex = if (savedCode != null) {
+            values.indexOf(savedCode).takeIf { it >= 0 } ?: defaultIndex
+        } else defaultIndex
 
         binding.acTelpost.setText(labels[startIndex], false)
+
         binding.acTelpost.setOnItemClickListener { _, _, position, _ ->
             prefs.edit { putString(keyLastTelpostCode, values[position]) }
         }
@@ -208,7 +219,9 @@ class MetadataScherm : Fragment() {
     // region Tellers
 
     private fun setupTellersField() {
-        if (binding.etTellers.text.isNullOrBlank()) binding.etTellers.setText("Yves De Saedeleer")
+        if (binding.etTellers.text.isNullOrBlank()) {
+            binding.etTellers.setText("Yves De Saedeleer")
+        }
         binding.etTellers.doOnTextChanged { _, _, _, _ -> }
     }
 
@@ -256,10 +269,14 @@ class MetadataScherm : Fragment() {
                 val octas = weatherManager.toOctas(w.cloudcover)
                 binding.acBewolking.setText("$octas/8", false)
                 binding.acNeerslag.setText(weatherManager.mapWeatherCodeToNeerslagOption(w.weathercode), false)
-                if (w.visibility > 0) binding.etZicht.setText(w.visibility.toString()) // meters
+                if (w.visibility > 0) {
+                    binding.etZicht.setText(w.visibility.toString()) // meters
+                }
                 val bft = weatherManager.toBeaufort(w.windspeed)
                 binding.acWindkracht.setText(toWindkrachtOption(bft, w.windspeed), false)
-                if (w.pressure > 0) binding.etLuchtdruk.setText(w.pressure.toString())
+                if (w.pressure > 0) {
+                    binding.etLuchtdruk.setText(w.pressure.toString())
+                }
             }
         }
     }
@@ -276,7 +293,7 @@ class MetadataScherm : Fragment() {
             try {
                 val l = lm.getLastKnownLocation(p) ?: continue
                 if (best == null || (l.time > best!!.time)) best = l
-            } catch (_: SecurityException) { /* no-op */ }
+            } catch (_: SecurityException) { }
         }
         return best
     }
@@ -306,109 +323,111 @@ class MetadataScherm : Fragment() {
 
     // endregion
 
-    // region Onderste knoppen
+    // region Onderste knoppen (hier ook de UPDATE-test koppelen)
 
     private fun setupBottomBar() {
-        binding.btnAnnuleer.setOnClickListener { findNavController().popBackStack() }
-        binding.btnVerder.setOnClickListener { onVerderClicked() }
+        binding.btnAnnuleer.setOnClickListener {
+            findNavController().popBackStack()
+        }
+        binding.btnVerder.setOnClickListener {
+            val form = collectForm()
+
+            // --- UPDATE-DEMO: hardcoded parameters voor jouw test ---
+            val zone = ZoneId.systemDefault()
+            val today = LocalDate.now(zone)
+            val beginSec = today.atTime(23, 5).atZone(zone).toEpochSecond()
+            val eindSec  = today.atTime(23, 6).atZone(zone).toEpochSecond()
+
+            val telpostId = "5177" // VoiceTally Testsite
+            val onlineId  = "3147070" // bestaande telling die je wil bijwerken
+
+            val payload = CountsPayloadBuilder.buildUpdateDemo(
+                form = form,
+                beginSec = beginSec,
+                eindSec = eindSec,
+                weerOpmerking = binding.etWeerOpmerking.text?.toString().orEmpty(),
+                telpostId = telpostId,
+                onlineId = onlineId
+            )
+            // -------------------------------------------------------
+
+            showPayloadAndUpload(payload)
+        }
     }
 
-    private fun onVerderClicked() {
-        // Bouw JSON preview volgens jouw regels
-        val preview = buildExportPreviewJson()
-
-        // Bewaar tussentijds
-        requireContext().getSharedPreferences(exportPrefsName, Context.MODE_PRIVATE)
-            .edit { putString(keyLastPreviewJson, preview) }
-
-        // Toon popup met JSON en opties
+    private fun showPayloadAndUpload(payload: String) {
         val tv = TextView(requireContext()).apply {
-            text = preview
+            text = payload
             setTextIsSelectable(true)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            if (Build.VERSION.SDK_INT >= 28) {
-                typeface = android.graphics.Typeface.MONOSPACE
-            } else {
-                paint.isUnderlineText = false
-            }
             setPadding(24, 16, 24, 16)
         }
         val scroll = ScrollView(requireContext()).apply { addView(tv) }
 
         MaterialAlertDialogBuilder(requireContext())
-            .setTitle("Voorbeeld export (1 item)")
+            .setTitle("Te uploaden JSON (update-demo)")
             .setView(scroll)
-            .setPositiveButton("Verder") { _, _ ->
-                val form = collectForm()
-                findNavController().navigate(R.id.action_metadataScherm_to_soortSelectieScherm)
-            }
-            .setNeutralButton("Kopiëren") { _, _ ->
-                copyToClipboard("VoiceTally JSON", preview)
-            }
+            .setPositiveButton("Uploaden") { _, _ -> ensureCredsThenUpload(payload) }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
-    private fun copyToClipboard(label: String, text: String) {
-        val cm = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText(label, text))
-    }
-
-    /**
-     * Stelt een top-level JSONArray samen met 1 object,
-     * en vult elk veld conform jouw instructies.
-     *
-     * Let op: 'eindtijd' moet na 'begintijd' liggen → we zetten die op +60s.
-     */
-    private fun buildExportPreviewJson(): String {
-        val labels = resources.getStringArray(R.array.vt4_telpost_labels)
-        val values = resources.getStringArray(R.array.vt4_telpost_values)
-        val telpostLabel = binding.acTelpost.text?.toString().orEmpty()
-        val telpostIndex = labels.indexOf(telpostLabel).takeIf { it >= 0 } ?: 0
-        val telpostCode = values[telpostIndex]
-
-        val begintijdSec = Instant.now().epochSecond          // bij 'Verder'
-        val eindtijdSec = begintijdSec + 60                   // altijd 1 minuut later
-
-        val obj = JSONObject().apply {
-            put("externid", "Android App 1.8.45")
-            put("timezoneid", "Europe/Brussels")
-            put("bron", "4")
-            put("_id", "")
-            put("tellingid", "")
-            put("telpostid", telpostCode)
-            put("begintijd", begintijdSec.toString())
-            put("eindtijd", eindtijdSec.toString())
-            put("tellers", binding.etTellers.text?.toString().orEmpty())
-            put("weer", binding.etWeerOpmerking.text?.toString().orEmpty())
-            put("windrichting", binding.acWindrichting.text?.toString().orEmpty())
-            put("windkracht", binding.acWindkracht.text?.toString().orEmpty())
-            put("temperatuur", binding.etTemperatuur.text?.toString().orEmpty())
-            put("bewolking", binding.acBewolking.text?.toString().orEmpty())
-            put("bewolkinghoogte", "")
-            put("neerslag", binding.acNeerslag.text?.toString().orEmpty())
-            put("duurneerslag", "")
-            put("zicht", binding.etZicht.text?.toString().orEmpty())
-            put("tellersactief", "")
-            put("tellersaanwezig", "")
-            put("typetelling", "all")        // voorlopig vast zoals gevraagd
-            put("metersnet", "")
-            put("geluid", "")
-            put("opmerkingen", binding.etOpmerkingen.text?.toString().orEmpty())
-            put("onlineid", "")
-            put("HYDRO", "")
-            put("hpa", "")
-            put("equipment", "")
-            put("uuid", "Trektellen_Android_1.8.45_d337303b-35a0-4d6f-aa98-8c1a08e01647")
-            put("uploadtijdstip", "")
-            put("nrec", "4")
-            put("nsoort", "4")
-            put("data", SAMPLE_DATA_ARRAY)
+    private fun ensureCredsThenUpload(payload: String) {
+        if (!credentialsStore.hasCredentials()) {
+            showCredentialsDialog { doUpload(payload) }
+        } else {
+            doUpload(payload)
         }
-
-        val top = JSONArray().put(obj)
-        return top.toString(2) // pretty print
     }
+
+    private fun doUpload(payload: String) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            StorageUtils.saveJsonToPublicDocuments(
+                requireContext(),
+                "VoiceTally4/serverdata",
+                "last_upload.json",
+                payload
+            )
+
+            val (user, pass) = credentialsStore.get()
+            val resp: ApiResponse = withContext(Dispatchers.IO) {
+                if (user.isNullOrBlank() || pass.isNullOrBlank()) {
+                    ApiResponse(false, 401, """{"message":"missing credentials"}""")
+                } else {
+                    TrektellenApi().postCountsSaveBasicAuth(user, pass, payload)
+                }
+            }
+
+            StorageUtils.saveJsonToPublicDocuments(
+                requireContext(),
+                "VoiceTally4/serverdata",
+                "last_upload_response.json",
+                resp.body
+            )
+
+            val tv = TextView(requireContext()).apply {
+                text = resp.body
+                setTextIsSelectable(true)
+                setPadding(24, 16, 24, 16)
+            }
+            val scroll = ScrollView(requireContext()).apply { addView(tv) }
+
+            val title = "Server response (HTTP ${resp.code})"
+            val messageInfo = "\n\n↳ Opgeslagen als:\n" +
+                    "Documents/VoiceTally4/serverdata/last_upload.json\n" +
+                    "Documents/VoiceTally4/serverdata/last_upload_response.json"
+
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle(title)
+                .setView(scroll)
+                .setMessage(messageInfo)
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+        }
+    }
+
+    // endregion
+
+    // region Collect form
 
     private fun collectForm(): MetadataForm {
         val hhmm = binding.etTijd.text?.toString()?.takeIf { it.matches(Regex("\\d{2}:\\d{2}")) }
@@ -448,140 +467,56 @@ class MetadataScherm : Fragment() {
             tellersId = tellerId,
             windrichting = windrichting,
             temperatuurC = temperatuurC,
-            bewolkingAchtsten = bewolking,
+            bewolkingAchtsten = bewolking,     // "x/8" in UI → mappen we in payload naar "x"
             neerslag = neerslag,
-            zichtKm = zichtMeters, // inhoud = meters (legacy veldnaam)
-            windkrachtBft = windkrachtBft,
+            zichtKm = zichtMeters,              // meters (legacy naam)
+            windkrachtBft = windkrachtBft,      // "4bf" etc. → mappen we in payload naar cijfer
             luchtdrukHpa = luchtdrukHpa,
             opmerkingen = binding.etOpmerkingen.text?.toString()?.trim().orEmpty()
         )
     }
 
+    // endregion
+
+    private fun showCredentialsDialog(onSaved: () -> Unit) {
+        val container = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 16, 24, 8)
+        }
+
+        fun field(hint: String, pw: Boolean = false): Pair<TextInputLayout, TextInputEditText> {
+            val til = TextInputLayout(requireContext()).apply { this.hint = hint }
+            val et = TextInputEditText(requireContext()).apply {
+                inputType = if (pw)
+                    android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                else
+                    android.text.InputType.TYPE_CLASS_TEXT
+                maxLines = 1
+            }
+            til.addView(et)
+            return til to et
+        }
+
+        val (tilUser, etUser) = field("Gebruikersnaam")
+        val (tilPass, etPass) = field("Wachtwoord", pw = true)
+        container.addView(tilUser)
+        container.addView(tilPass)
+
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle("Inloggen Trektellen (Basic Auth)")
+            .setView(container)
+            .setPositiveButton("Opslaan") { _, _ ->
+                val u = etUser.text?.toString()?.trim().orEmpty()
+                val p = etPass.text?.toString()?.trim().orEmpty()
+                credentialsStore.save(u, p)
+                onSaved()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
         _binding = null
-    }
-
-    companion object {
-        /** Volledige 'data'-array uit jouw voorbeeld, ongewijzigd (voor preview). */
-        private val SAMPLE_DATA_ARRAY: JSONArray by lazy {
-            val raw = """
-                [
-                    {
-                        "_id": "14",
-                        "tellingid": "28",
-                        "soortid": "31",
-                        "aantal": "1",
-                        "richting": "w",
-                        "aantalterug": "2",
-                        "richtingterug": "o",
-                        "sightingdirection": "NW",
-                        "lokaal": "3",
-                        "aantal_plus": "0",
-                        "aantalterug_plus": "0",
-                        "lokaal_plus": "0",
-                        "markeren": "1",
-                        "markerenlokaal": "1",
-                        "geslacht": "M",
-                        "leeftijd": "A",
-                        "kleed": "L",
-                        "opmerkingen": "Remarks",
-                        "trektype": "R",
-                        "teltype": "C",
-                        "location": "",
-                        "height": "L",
-                        "tijdstip": "1756721135",
-                        "groupid": "14",
-                        "uploadtijdstip": "2025-09-01 10:05:39",
-                        "totaalaantal": "3"
-                    },
-                    {
-                        "_id": "13",
-                        "tellingid": "28",
-                        "soortid": "254",
-                        "aantal": "300",
-                        "richting": "",
-                        "aantalterug": "0",
-                        "richtingterug": "",
-                        "sightingdirection": "",
-                        "lokaal": "0",
-                        "aantal_plus": "0",
-                        "aantalterug_plus": "0",
-                        "lokaal_plus": "0",
-                        "markeren": "0",
-                        "markerenlokaal": "0",
-                        "geslacht": "",
-                        "leeftijd": "",
-                        "kleed": "",
-                        "opmerkingen": "",
-                        "trektype": "",
-                        "teltype": "",
-                        "location": "",
-                        "height": "M",
-                        "tijdstip": "1756210093",
-                        "groupid": "13",
-                        "uploadtijdstip": "2025-09-01 10:05:39",
-                        "totaalaantal": "300"
-                    },
-                    {
-                        "_id": "12",
-                        "tellingid": "28",
-                        "soortid": "105",
-                        "aantal": "1",
-                        "richting": "",
-                        "aantalterug": "0",
-                        "richtingterug": "",
-                        "sightingdirection": "",
-                        "lokaal": "0",
-                        "aantal_plus": "0",
-                        "aantalterug_plus": "0",
-                        "lokaal_plus": "0",
-                        "markeren": "0",
-                        "markerenlokaal": "0",
-                        "geslacht": "",
-                        "leeftijd": "",
-                        "kleed": "",
-                        "opmerkingen": "",
-                        "trektype": "",
-                        "teltype": "",
-                        "location": "",
-                        "height": "M",
-                        "tijdstip": "1756209152",
-                        "groupid": "12",
-                        "uploadtijdstip": "2025-09-01 10:05:39",
-                        "totaalaantal": "1"
-                    },
-                    {
-                        "_id": "11",
-                        "tellingid": "28",
-                        "soortid": "94",
-                        "aantal": "1",
-                        "richting": "",
-                        "aantalterug": "0",
-                        "richtingterug": "",
-                        "sightingdirection": "ENE",
-                        "lokaal": "0",
-                        "aantal_plus": "0",
-                        "aantalterug_plus": "0",
-                        "lokaal_plus": "0",
-                        "markeren": "0",
-                        "markerenlokaal": "0",
-                        "geslacht": "",
-                        "leeftijd": "",
-                        "kleed": "",
-                        "opmerkingen": "",
-                        "trektype": "",
-                        "teltype": "",
-                        "location": "",
-                        "height": "M",
-                        "tijdstip": "1756208899",
-                        "groupid": "11",
-                        "uploadtijdstip": "2025-09-01 10:05:39",
-                        "totaalaantal": "1"
-                    }
-                ]
-            """.trimIndent()
-            JSONArray(raw)
-        }
     }
 }
