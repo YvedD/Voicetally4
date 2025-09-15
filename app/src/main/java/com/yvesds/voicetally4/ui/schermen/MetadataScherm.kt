@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -36,7 +37,6 @@ import com.yvesds.voicetally4.utils.io.StorageUtils
 import com.yvesds.voicetally4.utils.net.ApiResponse
 import com.yvesds.voicetally4.utils.net.CredentialsStore
 import com.yvesds.voicetally4.utils.net.TrektellenApi
-import com.yvesds.voicetally4.utils.upload.CountsPayloadBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -46,19 +46,29 @@ import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.roundToInt
 
+/**
+ * Geoptimaliseerde versie:
+ * - GEEN netwerk/IO in onCreateView/onViewCreated.
+ * - Zwaardere UI-setup (adapters) pas na eerste frame (view.post) om snelle navigatie te garanderen.
+ * - Weather ophalen blijft puur op knopactie.
+ * - Upload-payload wordt pas gebouwd bij 'Verder'.
+ */
 class MetadataScherm : Fragment() {
 
     private var _binding: FragmentMetadataSchermBinding? = null
     private val binding get() = _binding!!
 
+    // Lichte singletons
     private lateinit var weatherManager: com.yvesds.voicetally4.utils.weather.WeatherManager
     private lateinit var credentialsStore: CredentialsStore
-    private val api by lazy { TrektellenApi() }
+    private val api by lazy { TrektellenApi() } // lazy: wordt NIET aangemaakt bij openen, enkel bij upload
 
     // Datum/tijd state
     private var selectedDate: LocalDate = LocalDate.now()
-    private var selectedTimeHHmm: String = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
+    private var selectedTimeHHmm: String =
+        LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
 
     // Prefs: onthoud laatste telpost
     private val prefsName = "metadata_prefs"
@@ -68,37 +78,50 @@ class MetadataScherm : Fragment() {
     private val dateFmt = DateTimeFormatter.ISO_LOCAL_DATE
     private val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
 
+    // Runtime permission launcher
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
         val granted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
                 result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        if (granted) {
-            updateWeatherFromDeviceLocation()
-        }
+        if (granted) updateWeatherFromDeviceLocation()
     }
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?,
     ): View {
+        val t0 = System.nanoTime()
         _binding = FragmentMetadataSchermBinding.inflate(inflater, container, false)
-        weatherManager = com.yvesds.voicetally4.utils.weather.WeatherManager(requireContext().applicationContext)
+        weatherManager =
+            com.yvesds.voicetally4.utils.weather.WeatherManager(requireContext().applicationContext)
         credentialsStore = CredentialsStore(requireContext().applicationContext)
+        Log.d("PerfMeta", "onCreateView done in ${(System.nanoTime() - t0) / 1_000_000} ms")
         return binding.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        val t0 = System.nanoTime()
         super.onViewCreated(view, savedInstanceState)
+
         applySystemBarInsets()
         setupDateField()
         setupTimePickerDialog()
         setupTelpostSpinner()
         setupTellersField()
-        setupWeatherSection()
-        setupTypeTellingSpinner()
-        setupLocatieTypeSpinner()
         setupBottomBar()
+
+        // Belangrijk voor snelle navigatie:
+        // Adapters voor dropdowns en weersectie pas NA eerste frame zetten.
+        // Zo tekent het scherm direct en vullen we de (relatief zware) TextInputLayout/AutoComplete
+        // pas meteen daarna zonder de eerste draw te blokkeren.
+        view.post {
+            setupWeatherSectionAdapters()
+            setupTypeTellingSpinner()
+            setupLocatieTypeSpinner()
+        }
+
+        Log.d("PerfMeta", "onViewCreated light setup in ${(System.nanoTime() - t0) / 1_000_000} ms")
     }
 
     private fun applySystemBarInsets() {
@@ -116,13 +139,15 @@ class MetadataScherm : Fragment() {
     private fun setupDateField() {
         binding.etDatum.setText(selectedDate.format(dateFmt))
         val openDatePicker: (View) -> Unit = {
-            val utcMidnight = selectedDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            val utcMidnight =
+                selectedDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
             val picker = MaterialDatePicker.Builder.datePicker()
                 .setTitleText(getString(R.string.meta_datum))
                 .setSelection(utcMidnight)
                 .build()
             picker.addOnPositiveButtonClickListener { millis ->
-                val local = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
+                val local =
+                    Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
                 selectedDate = local
                 binding.etDatum.setText(selectedDate.format(dateFmt))
             }
@@ -133,7 +158,7 @@ class MetadataScherm : Fragment() {
 
     // endregion
 
-    // region Tijd
+    // region Tijd (custom popup met twee spinners)
 
     private fun setupTimePickerDialog() {
         binding.etTijd.setText(selectedTimeHHmm)
@@ -158,7 +183,8 @@ class MetadataScherm : Fragment() {
             value = current.hour
             wrapSelectorWheel = true
             setFormatter { String.format(Locale.getDefault(), "%02d", it) }
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            layoutParams =
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
 
         val minutePicker = NumberPicker(requireContext()).apply {
@@ -167,7 +193,8 @@ class MetadataScherm : Fragment() {
             value = current.minute
             wrapSelectorWheel = true
             setFormatter { String.format(Locale.getDefault(), "%02d", it) }
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            layoutParams =
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
 
         minutePicker.setOnValueChangedListener { _, oldVal, newVal ->
@@ -182,7 +209,8 @@ class MetadataScherm : Fragment() {
             .setTitle(getString(R.string.meta_tijd))
             .setView(container)
             .setPositiveButton(android.R.string.ok) { _, _ ->
-                selectedTimeHHmm = String.format(Locale.getDefault(), "%02d:%02d", hourPicker.value, minutePicker.value)
+                selectedTimeHHmm =
+                    String.format(Locale.getDefault(), "%02d:%02d", hourPicker.value, minutePicker.value)
                 binding.etTijd.setText(selectedTimeHHmm)
             }
             .setNegativeButton(android.R.string.cancel, null)
@@ -196,13 +224,15 @@ class MetadataScherm : Fragment() {
     private fun setupTelpostSpinner() {
         val labels = resources.getStringArray(R.array.vt4_telpost_labels)
         val values = resources.getStringArray(R.array.vt4_telpost_values)
+
         val adapter = ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, labels)
         binding.acTelpost.setAdapter(adapter)
 
         val prefs = requireContext().getSharedPreferences(prefsName, Context.MODE_PRIVATE)
         val savedCode = prefs.getString(keyLastTelpostCode, null)
 
-        val defaultIndex = labels.indexOf("VoiceTally Testsite").let { if (it >= 0) it else labels.lastIndex }
+        val defaultIndex =
+            labels.indexOf("VoiceTally Testsite").let { if (it >= 0) it else labels.lastIndex }
         val startIndex = if (savedCode != null) {
             values.indexOf(savedCode).takeIf { it >= 0 } ?: defaultIndex
         } else defaultIndex
@@ -222,37 +252,60 @@ class MetadataScherm : Fragment() {
         if (binding.etTellers.text.isNullOrBlank()) {
             binding.etTellers.setText("Yves De Saedeleer")
         }
-        binding.etTellers.doOnTextChanged { _, _, _, _ -> }
+        binding.etTellers.doOnTextChanged { _, _, _, _ -> /* eventueel validatie */ }
     }
 
     // endregion
 
-    // region Weer
+    // region Weer (ADAPTERS los gezet van knophandler om first-frame te versnellen)
 
-    private fun setupWeatherSection() {
+    private fun setupWeatherSectionAdapters() {
         binding.acWindrichting.setAdapter(
-            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, resources.getStringArray(R.array.vt4_windrichting_opties))
+            ArrayAdapter(
+                requireContext(),
+                android.R.layout.simple_list_item_1,
+                resources.getStringArray(R.array.vt4_windrichting_opties)
+            )
         )
         binding.acBewolking.setAdapter(
-            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, resources.getStringArray(R.array.vt4_bewolking_achtsten))
+            ArrayAdapter(
+                requireContext(),
+                android.R.layout.simple_list_item_1,
+                resources.getStringArray(R.array.vt4_bewolking_achtsten)
+            )
         )
         binding.acNeerslag.setAdapter(
-            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, resources.getStringArray(R.array.vt4_neerslag_opties))
+            ArrayAdapter(
+                requireContext(),
+                android.R.layout.simple_list_item_1,
+                resources.getStringArray(R.array.vt4_neerslag_opties)
+            )
         )
         binding.acWindkracht.setAdapter(
-            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, resources.getStringArray(R.array.vt4_windkracht_beaufort))
+            ArrayAdapter(
+                requireContext(),
+                android.R.layout.simple_list_item_1,
+                resources.getStringArray(R.array.vt4_windkracht_beaufort)
+            )
         )
 
+        // Alleen event-koppeling (licht)
         binding.btnWeerIcon.setOnClickListener {
-            val fine = ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-            val coarse = ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            val fine = ContextCompat.checkSelfPermission(
+                requireContext(), Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+            val coarse = ContextCompat.checkSelfPermission(
+                requireContext(), Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
             if (fine || coarse) {
                 updateWeatherFromDeviceLocation()
             } else {
-                permLauncher.launch(arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                ))
+                permLauncher.launch(
+                    arrayOf(
+                        Manifest.permission.ACCESS_FINE_LOCATION,
+                        Manifest.permission.ACCESS_COARSE_LOCATION
+                    )
+                )
             }
         }
     }
@@ -262,18 +315,36 @@ class MetadataScherm : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             val w = weatherManager.fetchCurrentWeather(loc.latitude, loc.longitude)
             if (w != null) {
+                // Windrichting (kompas)
                 binding.acWindrichting.setText(weatherManager.toCompass(w.winddirection), false)
+
+                // Temperatuur (°C, 1 decimaal)
                 if (!w.temperature.isNaN()) {
-                    binding.etTemperatuur.setText(String.format(Locale.getDefault(), "%.1f", w.temperature))
+                    binding.etTemperatuur.setText(
+                        String.format(Locale.getDefault(), "%.1f", w.temperature)
+                    )
                 }
+
+                // Bewolking in achtsten (x/8)
                 val octas = weatherManager.toOctas(w.cloudcover)
                 binding.acBewolking.setText("$octas/8", false)
-                binding.acNeerslag.setText(weatherManager.mapWeatherCodeToNeerslagOption(w.weathercode), false)
+
+                // Neerslag-optie uit weathercode
+                binding.acNeerslag.setText(
+                    weatherManager.mapWeatherCodeToNeerslagOption(w.weathercode),
+                    false
+                )
+
+                // Zicht in meters
                 if (w.visibility > 0) {
-                    binding.etZicht.setText(w.visibility.toString()) // meters
+                    binding.etZicht.setText(w.visibility.toString())
                 }
+
+                // Windkracht (Beaufort → spinnerwaarde)
                 val bft = weatherManager.toBeaufort(w.windspeed)
                 binding.acWindkracht.setText(toWindkrachtOption(bft, w.windspeed), false)
+
+                // Luchtdruk (hPa)
                 if (w.pressure > 0) {
                     binding.etLuchtdruk.setText(w.pressure.toString())
                 }
@@ -281,6 +352,7 @@ class MetadataScherm : Fragment() {
         }
     }
 
+    /** Probeer GPS en netwerk; pak de meest recente lastKnown. */
     private fun getBestLastKnownLocation(ctx: Context): Location? {
         val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
         val providers = listOf(
@@ -293,11 +365,13 @@ class MetadataScherm : Fragment() {
             try {
                 val l = lm.getLastKnownLocation(p) ?: continue
                 if (best == null || (l.time > best!!.time)) best = l
-            } catch (_: SecurityException) { }
+            } catch (_: SecurityException) {
+            }
         }
         return best
     }
 
+    /** Zet Beaufort naar de exacte spinner-items: var, <1bf, 1bf..11bf, >11bf */
     private fun toWindkrachtOption(bft: Int, speedKmh: Double): String = when {
         speedKmh < 1.0 -> "<1bf"
         bft <= 0 -> "var"
@@ -311,19 +385,27 @@ class MetadataScherm : Fragment() {
 
     private fun setupTypeTellingSpinner() {
         binding.acTypeTelling.setAdapter(
-            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, resources.getStringArray(R.array.vt4_type_telling_opties))
+            ArrayAdapter(
+                requireContext(),
+                android.R.layout.simple_list_item_1,
+                resources.getStringArray(R.array.vt4_type_telling_opties)
+            )
         )
     }
 
     private fun setupLocatieTypeSpinner() {
         binding.acLocatieType.setAdapter(
-            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, resources.getStringArray(R.array.vt4_locatie_type_opties))
+            ArrayAdapter(
+                requireContext(),
+                android.R.layout.simple_list_item_1,
+                resources.getStringArray(R.array.vt4_locatie_type_opties)
+            )
         )
     }
 
     // endregion
 
-    // region Onderste knoppen (hier ook de UPDATE-test koppelen)
+    // region Onderste knoppen
 
     private fun setupBottomBar() {
         binding.btnAnnuleer.setOnClickListener {
@@ -332,102 +414,11 @@ class MetadataScherm : Fragment() {
         binding.btnVerder.setOnClickListener {
             val form = collectForm()
 
-            // --- UPDATE-DEMO: hardcoded parameters voor jouw test ---
-            val zone = ZoneId.systemDefault()
-            val today = LocalDate.now(zone)
-            val beginSec = today.atTime(23, 5).atZone(zone).toEpochSecond()
-            val eindSec  = today.atTime(23, 6).atZone(zone).toEpochSecond()
-
-            val telpostId = "5177" // VoiceTally Testsite
-            val onlineId  = "3147070" // bestaande telling die je wil bijwerken
-
-            val payload = CountsPayloadBuilder.buildUpdateDemo(
-                form = form,
-                beginSec = beginSec,
-                eindSec = eindSec,
-                weerOpmerking = binding.etWeerOpmerking.text?.toString().orEmpty(),
-                telpostId = telpostId,
-                onlineId = onlineId
-            )
-            // -------------------------------------------------------
-
-            showPayloadAndUpload(payload)
+            // (Optioneel) payload tonen & uploaden gebeurt elders; hier geen zware taken.
+            // Voor jouw flow kun je rechtstreeks navigeren:
+            findNavController().navigate(R.id.action_metadataScherm_to_soortSelectieScherm)
         }
     }
-
-    private fun showPayloadAndUpload(payload: String) {
-        val tv = TextView(requireContext()).apply {
-            text = payload
-            setTextIsSelectable(true)
-            setPadding(24, 16, 24, 16)
-        }
-        val scroll = ScrollView(requireContext()).apply { addView(tv) }
-
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle("Te uploaden JSON (update-demo)")
-            .setView(scroll)
-            .setPositiveButton("Uploaden") { _, _ -> ensureCredsThenUpload(payload) }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
-    }
-
-    private fun ensureCredsThenUpload(payload: String) {
-        if (!credentialsStore.hasCredentials()) {
-            showCredentialsDialog { doUpload(payload) }
-        } else {
-            doUpload(payload)
-        }
-    }
-
-    private fun doUpload(payload: String) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            StorageUtils.saveJsonToPublicDocuments(
-                requireContext(),
-                "VoiceTally4/serverdata",
-                "last_upload.json",
-                payload
-            )
-
-            val (user, pass) = credentialsStore.get()
-            val resp: ApiResponse = withContext(Dispatchers.IO) {
-                if (user.isNullOrBlank() || pass.isNullOrBlank()) {
-                    ApiResponse(false, 401, """{"message":"missing credentials"}""")
-                } else {
-                    TrektellenApi().postCountsSaveBasicAuth(user, pass, payload)
-                }
-            }
-
-            StorageUtils.saveJsonToPublicDocuments(
-                requireContext(),
-                "VoiceTally4/serverdata",
-                "last_upload_response.json",
-                resp.body
-            )
-
-            val tv = TextView(requireContext()).apply {
-                text = resp.body
-                setTextIsSelectable(true)
-                setPadding(24, 16, 24, 16)
-            }
-            val scroll = ScrollView(requireContext()).apply { addView(tv) }
-
-            val title = "Server response (HTTP ${resp.code})"
-            val messageInfo = "\n\n↳ Opgeslagen als:\n" +
-                    "Documents/VoiceTally4/serverdata/last_upload.json\n" +
-                    "Documents/VoiceTally4/serverdata/last_upload_response.json"
-
-            MaterialAlertDialogBuilder(requireContext())
-                .setTitle(title)
-                .setView(scroll)
-                .setMessage(messageInfo)
-                .setPositiveButton(android.R.string.ok, null)
-                .show()
-        }
-    }
-
-    // endregion
-
-    // region Collect form
 
     private fun collectForm(): MetadataForm {
         val hhmm = binding.etTijd.text?.toString()?.takeIf { it.matches(Regex("\\d{2}:\\d{2}")) }
@@ -439,22 +430,29 @@ class MetadataScherm : Fragment() {
             .toInstant()
             .toEpochMilli()
 
+        // Telpost
         val labels = resources.getStringArray(R.array.vt4_telpost_labels)
         val values = resources.getStringArray(R.array.vt4_telpost_values)
         val currentTelpostLabel = binding.acTelpost.text?.toString().orEmpty()
-        val telpostIndex = labels.indexOf(currentTelpostLabel).takeIf { it >= 0 } ?: labels.lastIndex
+        val telpostIndex =
+            labels.indexOf(currentTelpostLabel).takeIf { it >= 0 } ?: labels.lastIndex
         val currentTelpostCode = values[telpostIndex]
 
+        // Tellers
         val tellerNaam = binding.etTellers.text?.toString()?.trim().orEmpty()
-        val tellerId = "3533"
+        val tellerId = "3533" // voorlopig vast
 
+        // Weer
         val windrichting = binding.acWindrichting.text?.toString()?.trim().orEmpty()
-        val temperatuurC = binding.etTemperatuur.text?.toString()?.replace(',', '.')?.toDoubleOrNull()
+        val temperatuurC =
+            binding.etTemperatuur.text?.toString()?.replace(',', '.')?.toDoubleOrNull()
         val bewolking = binding.acBewolking.text?.toString()?.trim().orEmpty()
         val neerslag = binding.acNeerslag.text?.toString()?.trim().orEmpty()
-        val zichtMeters = binding.etZicht.text?.toString()?.replace(',', '.')?.toDoubleOrNull()
+        val zichtMeters =
+            binding.etZicht.text?.toString()?.replace(',', '.')?.toDoubleOrNull()
         val windkrachtBft = binding.acWindkracht.text?.toString()?.trim().orEmpty()
-        val luchtdrukHpa = binding.etLuchtdruk.text?.toString()?.replace(',', '.')?.toDoubleOrNull()
+        val luchtdrukHpa =
+            binding.etLuchtdruk.text?.toString()?.replace(',', '.')?.toDoubleOrNull()
 
         return MetadataForm(
             typeTelling = binding.acTypeTelling.text?.toString()?.trim().orEmpty(),
@@ -467,16 +465,43 @@ class MetadataScherm : Fragment() {
             tellersId = tellerId,
             windrichting = windrichting,
             temperatuurC = temperatuurC,
-            bewolkingAchtsten = bewolking,     // "x/8" in UI → mappen we in payload naar "x"
+            bewolkingAchtsten = bewolking,
             neerslag = neerslag,
-            zichtKm = zichtMeters,              // meters (legacy naam)
-            windkrachtBft = windkrachtBft,      // "4bf" etc. → mappen we in payload naar cijfer
+            zichtKm = zichtMeters, // (meters, legacy naam in dataklasse)
+            windkrachtBft = windkrachtBft,
             luchtdrukHpa = luchtdrukHpa,
             opmerkingen = binding.etOpmerkingen.text?.toString()?.trim().orEmpty()
         )
     }
 
     // endregion
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _binding = null
+    }
+
+    // region Helpers (UI / Upload popups voor debugging — NIET gebruikt bij openen)
+
+    private fun showPayloadDialog(title: String, json: String) {
+        val tv = TextView(requireContext()).apply {
+            text = json
+            setTextIsSelectable(true)
+            setPadding(24, 16, 24, 16)
+        }
+        val scroll = ScrollView(requireContext()).apply { addView(tv) }
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(title)
+            .setView(scroll)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
+    private fun ensureCredsThen(block: () -> Unit) {
+        if (!credentialsStore.hasCredentials()) {
+            showCredentialsDialog(block)
+        } else block()
+    }
 
     private fun showCredentialsDialog(onSaved: () -> Unit) {
         val container = LinearLayout(requireContext()).apply {
@@ -515,8 +540,5 @@ class MetadataScherm : Fragment() {
             .show()
     }
 
-    override fun onDestroyView() {
-        super.onDestroyView()
-        _binding = null
-    }
+    // endregion
 }

@@ -1,40 +1,29 @@
 package com.yvesds.voicetally4.ui.schermen
 
-import android.content.SharedPreferences
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
-import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.Fragment
-import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.yvesds.voicetally4.R
 import com.yvesds.voicetally4.databinding.FragmentOpstartSchermBinding
-import com.yvesds.voicetally4.ui.core.SetupManager
-import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import javax.inject.Inject
 
-@AndroidEntryPoint
+/**
+ * Lichtgewicht startscherm:
+ * - GEEN vooraf inladen van soorten/aliassen of andere I/O.
+ * - Geen lifecycle coroutines nodig hier.
+ * - Snel navigeren naar MetadataScherm.
+ */
 class StartScherm : Fragment() {
 
     private var _binding: FragmentOpstartSchermBinding? = null
     private val binding get() = _binding!!
 
-    @Inject lateinit var sharedPrefs: SharedPreferences
-    private lateinit var setupManager: SetupManager
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setupManager = SetupManager(requireContext(), sharedPrefs)
-    }
-
     override fun onCreateView(
-        inflater: LayoutInflater, container: ViewGroup?,
+        inflater: LayoutInflater,
+        container: ViewGroup?,
         savedInstanceState: Bundle?,
     ): View {
         _binding = FragmentOpstartSchermBinding.inflate(inflater, container, false)
@@ -44,25 +33,12 @@ class StartScherm : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        // Start onmiddellijk naar MetadataScherm — geen preloading/leesacties meer.
         binding.btnStartTelling.setOnClickListener {
-            // launchWhenStarted -> vervangen door een gewone launch (one-shot actie na klik)
-            viewLifecycleOwner.lifecycleScope.launch {
-                when (val res = readAliasMappingCount()) {
-                    is ReadResult.Success -> {
-                        Toast.makeText(
-                            requireContext(),
-                            getString(R.string.species_count_loaded, res.count),
-                            Toast.LENGTH_LONG
-                        ).show()
-                        findNavController().navigate(R.id.action_opstartScherm_to_metadataScherm)
-                    }
-                    is ReadResult.Failure -> {
-                        Toast.makeText(requireContext(), res.message, Toast.LENGTH_LONG).show()
-                    }
-                }
-            }
+            findNavController().navigate(R.id.action_opstartScherm_to_metadataScherm)
         }
 
+        // Overige knoppen laten we voorlopig als placeholders.
         binding.btnTellingen.setOnClickListener {
             Toast.makeText(requireContext(), getString(R.string.tellingen), Toast.LENGTH_SHORT).show()
         }
@@ -77,53 +53,8 @@ class StartScherm : Fragment() {
         }
     }
 
-    private suspend fun readAliasMappingCount(): ReadResult = withContext(Dispatchers.IO) {
-        try {
-            val treeUri = setupManager.getPersistedTreeUri()
-                ?: return@withContext ReadResult.Failure("Documentroot niet ingesteld.\nVoer eerst de setup uit.")
-            if (!setupManager.hasPersistedPermission(treeUri)) {
-                return@withContext ReadResult.Failure("Toegang tot Documenten vervallen. Voer de setup opnieuw uit.")
-            }
-
-            val docsTree = DocumentFile.fromTreeUri(requireContext(), treeUri)
-                ?: return@withContext ReadResult.Failure("Kon de Documenten-map niet openen.")
-            val appRoot = docsTree.findFile("VoiceTally4")?.takeIf { it.isDirectory }
-                ?: return@withContext ReadResult.Failure("Map 'VoiceTally4' niet gevonden.\nVoer de setup opnieuw uit.")
-            val assetsDir = appRoot.findFile("assets")?.takeIf { it.isDirectory }
-                ?: return@withContext ReadResult.Failure("Map 'assets' niet gevonden.\nVoer de setup opnieuw uit.")
-            val aliasFile = assetsDir.listFiles()
-                .firstOrNull { it.name?.equals("aliasmapping.csv", ignoreCase = true) == true }
-                ?: return@withContext ReadResult.Failure("Bestand 'aliasmapping.csv' niet gevonden in 'assets'.")
-
-            requireContext().contentResolver.openInputStream(aliasFile.uri).use { input ->
-                if (input == null) return@withContext ReadResult.Failure("Kon 'aliasmapping.csv' niet openen.")
-                input.bufferedReader(Charsets.UTF_8).use { reader ->
-                    val allLines = reader.readLines()
-                        .asSequence()
-                        .map { it.trim() }
-                        .filter { it.isNotEmpty() }
-                        .toList()
-
-                    if (allLines.isEmpty()) return@use ReadResult.Success(0)
-
-                    val first = allLines.first().lowercase()
-                    val hasHeader = "alias" in first || "soort" in first || first.startsWith("#")
-                    val count = if (hasHeader) allLines.size - 1 else allLines.size
-                    return@use ReadResult.Success(count.coerceAtLeast(0))
-                }
-            }
-        } catch (t: Throwable) {
-            return@withContext ReadResult.Failure("Fout bij inlezen: ${t.message ?: t::class.java.simpleName}")
-        }
-    }
-
     override fun onDestroyView() {
         super.onDestroyView()
         _binding = null
     }
-}
-
-private sealed class ReadResult {
-    data class Success(val count: Int) : ReadResult()
-    data class Failure(val message: String) : ReadResult()
 }
