@@ -1,56 +1,41 @@
 package com.yvesds.voicetally4.utils.codes
 
 import android.content.Context
-import android.net.Uri
 import com.yvesds.voicetally4.utils.io.StorageUtils
-import com.yvesds.voicetally4.utils.net.ApiResponse
-import com.yvesds.voicetally4.utils.net.CredentialsStore
 import com.yvesds.voicetally4.utils.net.TrektellenApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-data class CodesSaveResult(
-    val response: ApiResponse,
-    val publicUri: Uri?,               // Android 10+: echte Uri, legacy: null
-    val publicDisplayPath: String      // "Documents/VoiceTally4/serverdata/codes.json"
-)
-
 /**
- * Haalt de codes via Basic Auth op en schrijft publiek naar:
+ * Ophalen en opslaan van Trektellen-codes via Basic Auth.
+ * Slaat het resultaat op als:
  *   Documents/VoiceTally4/serverdata/codes.json
- * Er wordt niets intern opgeslagen.
  */
-class CodesRepository(
-    private val context: Context,
-    private val creds: CredentialsStore
-) {
-    private val PUBLIC_REL_DIR = "VoiceTally4/serverdata"
-    private val PUBLIC_FILE = "codes.json"
-    private val PUBLIC_DISPLAY_PATH = "Documents/$PUBLIC_REL_DIR/$PUBLIC_FILE"
+object CodesRepository {
+
+    data class Result(val ok: Boolean, val httpCode: Int, val body: String)
 
     /**
-     * Download via Basic Auth en schrijf publiek weg.
-     * @return CodesSaveResult (inclusief volledige body in response.body).
+     * Haalt /api/codes op met Basic Auth (credentials uit CredentialsStore) en
+     * schrijft de JSON publiek weg als Documents/VoiceTally4/serverdata/codes.json.
+     *
+     * @return Result met ok/httpCode/body (body = volledige JSON of foutboodschap).
      */
-    suspend fun fetchAndSavePublic(): CodesSaveResult = withContext(Dispatchers.IO) {
-        val (u, p) = creds.get()
-        val apiResp = if (u.isNullOrBlank() || p.isNullOrBlank()) {
-            ApiResponse(false, 401, """{"message":"missing credentials"}""")
-        } else {
-            TrektellenApi().getCodesBasicAuth(u, p)
+    suspend fun fetchCodesBasicAuthAndSave(
+        context: Context,
+        language: String = "dutch",
+        versie: String = "1845"
+    ): Result = withContext(Dispatchers.IO) {
+        val resp = TrektellenApi.getCodesBasicAuth(context, language, versie)
+        if (resp.ok) {
+            // Publiek opslaan
+            StorageUtils.saveJsonToPublicDocuments(
+                context = context,
+                relativeSubdir = "VoiceTally4/serverdata",
+                fileName = "codes.json",
+                content = resp.body
+            )
         }
-
-        val uri = StorageUtils.saveJsonToPublicDocuments(
-            context = context,
-            relativeSubdir = PUBLIC_REL_DIR,
-            fileName = PUBLIC_FILE,
-            content = apiResp.body
-        )
-
-        CodesSaveResult(
-            response = apiResp,
-            publicUri = uri,
-            publicDisplayPath = PUBLIC_DISPLAY_PATH
-        )
+        Result(resp.ok, resp.httpCode, resp.body)
     }
 }

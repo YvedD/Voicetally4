@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Login dialog strings -->
+    <string name="login_title">Aanmelden bij Trektellen</string>
+    <string name="lbl_username">Gebruikersnaam</string>
+    <string name="lbl_password">Wachtwoord</string>
+    <string name="login_missing">Vul gebruikersnaam en wachtwoord in</string>
+</resources>

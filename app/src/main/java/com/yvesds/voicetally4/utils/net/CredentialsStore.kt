@@ -1,32 +1,40 @@
 package com.yvesds.voicetally4.utils.net
 
 import android.content.Context
-import android.content.SharedPreferences
+import android.util.Base64
 
 /**
- * Eenvoudige opslag van credentials in privé SharedPreferences.
- * (Voor productie zou je EncryptedSharedPreferences kunnen overwegen.)
+ * Eenvoudige opslag/lezing van Trektellen inloggegevens.
+ * We bewaren ze in SharedPreferences en kunnen meteen een Basic-Auth header leveren.
  */
-class CredentialsStore(context: Context) {
+object CredentialsStore {
 
-    private val prefs: SharedPreferences =
-        context.getSharedPreferences("trektellen_creds", Context.MODE_PRIVATE)
+    private const val PREFS = "trektellen_auth"
+    private const val KEY_USER = "username"
+    private const val KEY_PASS = "password"
 
-    fun save(username: String, password: String) {
-        prefs.edit().putString(KEY_USER, username).putString(KEY_PASS, password).apply()
+    fun save(context: Context, username: String, password: String) {
+        val sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        sp.edit().putString(KEY_USER, username).putString(KEY_PASS, password).apply()
     }
 
-    fun get(): Pair<String?, String?> {
-        return prefs.getString(KEY_USER, null) to prefs.getString(KEY_PASS, null)
+    fun get(context: Context): Pair<String, String>? {
+        val sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val u = sp.getString(KEY_USER, null)
+        val p = sp.getString(KEY_PASS, null)
+        return if (!u.isNullOrBlank() && !p.isNullOrBlank()) u to p else null
     }
 
-    fun hasCredentials(): Boolean {
-        val (u, p) = get()
-        return !u.isNullOrBlank() && !p.isNullOrBlank()
+    fun clear(context: Context) {
+        val sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        sp.edit().clear().apply()
     }
 
-    companion object {
-        private const val KEY_USER = "user"
-        private const val KEY_PASS = "pass"
+    /** Voor Basic Auth in HTTP header, bv. "Basic QWxhZGRpbjpPcGVuU2VzYW1l". */
+    fun getBasicAuthHeader(context: Context): String? {
+        val creds = get(context) ?: return null
+        val token = "${creds.first}:${creds.second}"
+        val b64 = Base64.encodeToString(token.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+        return "Basic $b64"
     }
 }

@@ -1,93 +1,85 @@
 package com.yvesds.voicetally4.utils.net
 
-import android.util.Base64
-import java.io.BufferedReader
+import android.content.Context
 import java.io.BufferedWriter
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLEncoder
-
-data class ApiResponse(
-    val ok: Boolean,
-    val code: Int,
-    val body: String
-)
 
 /**
- * HTTP-client voor de Trektellen API.
- * - GET met Basic Auth
- * - POST JSON met Basic Auth
+ * Heel lichte API-wrapper voor Trektellen met Basic Auth.
+ * - GET /api/codes (indien je die elders nog wil gebruiken)
+ * - POST /api/counts_save  (metadata upload)
  */
-class TrektellenApi {
+object TrektellenApi {
 
-    private val baseUrl = "https://trektellen.nl/api/"
-    private val userAgent = "VoiceTally4/1.0 (Android)"
+    data class SimpleHttpResponse(val ok: Boolean, val httpCode: Int, val body: String)
 
-    private fun buildQuery(params: Map<String, String>): String =
-        params.entries.joinToString("&") { (k, v) -> "${k}=${URLEncoder.encode(v, "UTF-8")}" }
+    private const val BASE = "https://trektellen.nl"
+    private const val TIMEOUT_CONNECT = 15000
+    private const val TIMEOUT_READ = 20000
 
-    private fun authHeader(username: String, password: String): String {
-        val token = Base64.encodeToString("$username:$password".toByteArray(), Base64.NO_WRAP)
-        return "Basic $token"
-    }
+    /**
+     * GET /api/codes?language=dutch&versie=1845 — met Basic Auth.
+     * (Niet automatisch gebruikt door MetadataScherm; enkel voorzien voor later gebruik.)
+     */
+    fun getCodesBasicAuth(context: Context, language: String = "dutch", versie: String = "1845"): SimpleHttpResponse {
+        val auth = CredentialsStore.getBasicAuthHeader(context)
+            ?: return SimpleHttpResponse(false, 401, "Geen credentials")
+        val url = URL("$BASE/api/codes?language=$language&versie=$versie")
 
-    private fun readResponse(conn: HttpURLConnection): ApiResponse {
-        return try {
-            val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val body = stream.bufferedReader().use(BufferedReader::readText)
-            ApiResponse(code in 200..299, code, body)
-        } catch (t: Throwable) {
-            ApiResponse(false, -1, t.message ?: "error")
-        } finally {
-            conn.disconnect()
-        }
-    }
-
-    /** GET /api/codes?language=&versie=  (Basic Auth) */
-    fun getCodesBasicAuth(username: String, password: String): ApiResponse {
-        val query = mapOf("language" to "dutch", "versie" to "1845")
-        val url = URL(baseUrl + "codes?" + buildQuery(query))
         val conn = (url.openConnection() as HttpURLConnection).apply {
-            connectTimeout = 20000
-            readTimeout = 30000
             requestMethod = "GET"
-            instanceFollowRedirects = true
-            setRequestProperty("Accept", "application/json, text/plain, */*")
-            setRequestProperty("User-Agent", userAgent)
-            setRequestProperty("Authorization", authHeader(username, password))
+            connectTimeout = TIMEOUT_CONNECT
+            readTimeout = TIMEOUT_READ
+            setRequestProperty("Authorization", auth)
         }
-        return readResponse(conn)
+        return execute(conn)
     }
 
-    /** POST /api/counts_save  (Basic Auth, JSON body als array-string) */
-    fun postCountsSaveBasicAuth(
-        username: String,
-        password: String,
-        jsonArrayString: String
-    ): ApiResponse {
-        val url = URL(baseUrl + "counts_save")
+    /**
+     * POST /api/counts_save met raw JSON-array in de body.
+     * Verwacht Basic Auth via CredentialsStore.
+     */
+    fun postCountsSaveBasicAuth(context: Context, jsonArrayBody: String): SimpleHttpResponse {
+        val auth = CredentialsStore.getBasicAuthHeader(context)
+            ?: return SimpleHttpResponse(false, 401, "Geen credentials")
+
+        val url = URL("$BASE/api/counts_save")
         val conn = (url.openConnection() as HttpURLConnection).apply {
-            connectTimeout = 20000
-            readTimeout = 30000
             requestMethod = "POST"
+            connectTimeout = TIMEOUT_CONNECT
+            readTimeout = TIMEOUT_READ
             doOutput = true
-            setRequestProperty("Accept", "application/json, text/plain, */*")
-            setRequestProperty("User-Agent", userAgent)
-            setRequestProperty("Authorization", authHeader(username, password))
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Authorization", auth)
         }
+
         return try {
             conn.outputStream.use { os ->
                 BufferedWriter(OutputStreamWriter(os, Charsets.UTF_8)).use { w ->
-                    w.write(jsonArrayString)
+                    w.write(jsonArrayBody)
                 }
             }
-            readResponse(conn)
+            execute(conn)
         } catch (t: Throwable) {
-            try { conn.disconnect() } catch (_: Throwable) {}
-            ApiResponse(false, -1, t.message ?: "error")
+            SimpleHttpResponse(false, -1, t.message ?: "unknown error").also { conn.disconnect() }
+        }
+    }
+
+    // --- intern ---
+
+    private fun execute(conn: HttpURLConnection): SimpleHttpResponse {
+        return try {
+            val code = conn.responseCode
+            val body = try {
+                conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
+            } catch (_: Throwable) {
+                conn.errorStream?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
+            }
+            SimpleHttpResponse(code in 200..299, code, body)
+        } finally {
+            conn.disconnect()
         }
     }
 }

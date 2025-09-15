@@ -9,13 +9,9 @@ import androidx.fragment.app.Fragment
 import androidx.navigation.fragment.findNavController
 import com.yvesds.voicetally4.R
 import com.yvesds.voicetally4.databinding.FragmentOpstartSchermBinding
+import dagger.hilt.android.AndroidEntryPoint
 
-/**
- * Lichtgewicht startscherm:
- * - GEEN vooraf inladen van soorten/aliassen of andere I/O.
- * - Geen lifecycle coroutines nodig hier.
- * - Snel navigeren naar MetadataScherm.
- */
+@AndroidEntryPoint
 class StartScherm : Fragment() {
 
     private var _binding: FragmentOpstartSchermBinding? = null
@@ -33,12 +29,12 @@ class StartScherm : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Start onmiddellijk naar MetadataScherm — geen preloading/leesacties meer.
+        // Zo snel mogelijk naar MetadataScherm; geen I/O of parsing meer hier.
         binding.btnStartTelling.setOnClickListener {
             findNavController().navigate(R.id.action_opstartScherm_to_metadataScherm)
         }
 
-        // Overige knoppen laten we voorlopig als placeholders.
+        // De rest houdt voorlopig de bestaande (lichte) toasts.
         binding.btnTellingen.setOnClickListener {
             Toast.makeText(requireContext(), getString(R.string.tellingen), Toast.LENGTH_SHORT).show()
         }

@@ -386,26 +386,6 @@
                         android:textSize="14sp" />
                 </com.google.android.material.textfield.TextInputLayout>
 
-                <!-- Locatie type -->
-                <com.google.android.material.textfield.TextInputLayout
-                    android:id="@+id/tilLocatieType"
-                    style="@style/Widget.VoiceTally4.TextInputLayout.ExposedDropdown"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:hint="@string/meta_locatie_type"
-                    app:boxBackgroundMode="outline"
-                    app:boxStrokeColor="?attr/colorTappableOutline">
-
-                    <com.google.android.material.textfield.MaterialAutoCompleteTextView
-                        android:id="@+id/acLocatieType"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginLeft="8dp"
-                        android:inputType="none"
-                        android:textSize="14sp"
-                        android:layout_marginRight="8dp" />
-                </com.google.android.material.textfield.TextInputLayout>
-
                 <!-- Opmerkingen -->
                 <com.google.android.material.textfield.TextInputLayout
                     android:id="@+id/tilOpmerkingen"
