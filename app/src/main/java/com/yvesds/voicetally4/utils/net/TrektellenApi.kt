@@ -3,8 +3,6 @@ package com.yvesds.voicetally4.utils.net
 import android.content.Context
 import android.os.Looper
 import androidx.annotation.CheckResult
-import com.yvesds.voicetally4.BuildConfig
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -23,8 +21,8 @@ import kotlin.coroutines.resume
  * Lichtgewicht Trektellen API-wrapper met Basic Auth.
  *
  * Belangrijk:
- * - **Nieuwe async API**: gebruik de `suspend` varianten om **niet** op de main thread te blokkeren.
- * - De oude sync-methodes zijn behouden (drop-in), maar gemarkeerd als @Deprecated.
+ * - Gebruik de `suspend`-varianten om **geen** I/O op de main thread te doen.
+ * - De sync-methodes zijn behouden (drop-in), maar gemarkeerd als @Deprecated.
  * - Korte timeouts + nette foutafhandeling.
  */
 object TrektellenApi {
@@ -36,7 +34,7 @@ object TrektellenApi {
     )
 
     private const val BASE = "https://trektellen.nl"
-    // Kort en scherp voor snappier UX
+    // Korte, snappy timeouts
     private const val TIMEOUT_CONNECT_MS = 3_000
     private const val TIMEOUT_READ_MS = 5_500
 
@@ -103,7 +101,6 @@ object TrektellenApi {
                 }
             }
         } catch (t: Throwable) {
-            // Als schrijven faalt nog netjes disconnecten
             conn.disconnect()
             return@withContext SimpleHttpResponse(false, -1, t.message ?: "write error")
         }
@@ -116,8 +113,8 @@ object TrektellenApi {
     // -----------------------------
 
     /**
-     * **Deprecated**: gebruik [getCodesBasicAuthAsync]. Deze methode zal blokkeren
-     * als je ze op de main thread aanroept. Alleen behouden voor drop-in compat.
+     * **Deprecated**: gebruik [getCodesBasicAuthAsync]. Behoudt drop-in compatibiliteit.
+     * Let op: als je dit op de main thread aanroept, blokkeert het alsnog.
      */
     @Deprecated("Gebruik getCodesBasicAuthAsync (suspend) om niet te blokkeren op main.")
     @JvmStatic
@@ -126,14 +123,17 @@ object TrektellenApi {
         language: String = "dutch",
         versie: String = "1845"
     ): SimpleHttpResponse {
-        return runBlockingOnIoIfMain {
+        // Voer netwerkrequest uit in IO; deze call blijft synchroon.
+        return if (Looper.myLooper() == Looper.getMainLooper()) {
+            runBlocking { withContext(Dispatchers.IO) { getCodesBasicAuthAsync(context, language, versie) } }
+        } else {
             runBlocking { getCodesBasicAuthAsync(context, language, versie) }
         }
     }
 
     /**
-     * **Deprecated**: gebruik [postCountsSaveBasicAuthAsync]. Deze methode zal blokkeren
-     * als je ze op de main thread aanroept. Alleen behouden voor drop-in compat.
+     * **Deprecated**: gebruik [postCountsSaveBasicAuthAsync]. Behoudt drop-in compatibiliteit.
+     * Let op: als je dit op de main thread aanroept, blokkeert het alsnog.
      */
     @Deprecated("Gebruik postCountsSaveBasicAuthAsync (suspend) om niet te blokkeren op main.")
     @JvmStatic
@@ -141,7 +141,9 @@ object TrektellenApi {
         context: Context,
         jsonArrayBody: String
     ): SimpleHttpResponse {
-        return runBlockingOnIoIfMain {
+        return if (Looper.myLooper() == Looper.getMainLooper()) {
+            runBlocking { withContext(Dispatchers.IO) { postCountsSaveBasicAuthAsync(context, jsonArrayBody) } }
+        } else {
             runBlocking { postCountsSaveBasicAuthAsync(context, jsonArrayBody) }
         }
     }
@@ -150,24 +152,11 @@ object TrektellenApi {
     // Intern
     // -----------------------------
 
-    private inline fun <T> runBlockingOnIoIfMain(block: () -> T): T {
-        // Houd UI responsief: voer het werk in ieder geval buiten main uit.
-        return if (Looper.myLooper() == Looper.getMainLooper()) {
-            runBlocking(Dispatchers.IO) { block() }
-        } else {
-            block()
-        }
-    }
-
     private suspend fun doRequest(conn: HttpURLConnection): SimpleHttpResponse {
-        // Zorg dat we kunnen annuleren: bij cancel -> disconnect()
+        // Maak netjes annuleerbaar: bij cancel -> disconnect()
         return suspendCancellableCoroutine { cont ->
             cont.invokeOnCancellation {
-                // Probeer de verbinding te verbreken om I/O te onderbreken
-                try {
-                    conn.disconnect()
-                } catch (_: Throwable) {
-                }
+                try { conn.disconnect() } catch (_: Throwable) {}
             }
 
             try {
@@ -180,19 +169,10 @@ object TrektellenApi {
                         body = body
                     )
                 )
-            } catch (ce: CancellationException) {
-                // Doorsturen als nette cancel
-                conn.disconnect()
-                throw ce
             } catch (t: Throwable) {
-                cont.resume(
-                    SimpleHttpResponse(false, -1, t.message ?: "network error")
-                )
+                cont.resume(SimpleHttpResponse(false, -1, t.message ?: "network error"))
             } finally {
-                try {
-                    conn.disconnect()
-                } catch (_: Throwable) {
-                }
+                try { conn.disconnect() } catch (_: Throwable) {}
             }
         }
     }
