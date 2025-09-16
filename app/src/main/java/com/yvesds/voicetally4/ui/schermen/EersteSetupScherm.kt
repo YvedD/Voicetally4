@@ -29,8 +29,8 @@ class EersteSetupScherm : Fragment() {
     private val binding get() = _binding!!
 
     @Inject lateinit var sharedPrefs: SharedPreferences
-    private lateinit var setup: SetupManager
 
+    private lateinit var setup: SetupManager
     private var flowStarted = false
 
     private val allPermissions: Array<String> by lazy {
@@ -54,12 +54,8 @@ class EersteSetupScherm : Fragment() {
             MaterialAlertDialogBuilder(requireContext())
                 .setTitle(R.string.perm_denied_title)
                 .setMessage(getString(R.string.perm_denied_msg, denied.joinToString()))
-                .setPositiveButton(R.string.try_again) { _, _ ->
-                    startSetupFlow()
-                }
-                .setNegativeButton(android.R.string.cancel) { _, _ ->
-                    setBusy(false)
-                }
+                .setPositiveButton(R.string.try_again) { _, _ -> startSetupFlow() }
+                .setNegativeButton(android.R.string.cancel) { _, _ -> setBusy(false) }
                 .show()
         }
     }
@@ -73,6 +69,7 @@ class EersteSetupScherm : Fragment() {
             setBusy(false)
             return@registerForActivityResult
         }
+
         // Bewaar & persisteer permissie met de effectief teruggegeven flags
         val grantedFlags = res.data?.flags ?: 0
         setup.savePersistedTreeUri(uri)
@@ -81,6 +78,8 @@ class EersteSetupScherm : Fragment() {
         // Maak/controleer mapstructuur
         val r = setup.ensureFolderStructure(uri)
         if (r.isSuccess) {
+            // <<< SNELLE Vlag zetten, zodat Activity meteen opstartscherm kiest >>>
+            setup.markSetupDone()
             Toast.makeText(requireContext(), getString(R.string.setup_done), Toast.LENGTH_SHORT).show()
             navigateToStart()
         } else {
@@ -99,7 +98,9 @@ class EersteSetupScherm : Fragment() {
     }
 
     override fun onCreateView(
-        inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?,
     ): View {
         _binding = FragmentEersteSetupSchermBinding.inflate(inflater, container, false)
         return binding.root
@@ -108,11 +109,12 @@ class EersteSetupScherm : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Directe autostart zonder UI-knop
-        if (setup.isSetupComplete()) {
+        // Mocht je hier toch belanden terwijl alles al klaar is, navigeer direct weg.
+        if (setup.isSetupComplete() || setup.isSetupDoneFlag()) {
             navigateToStart()
             return
         }
+
         if (!flowStarted) {
             flowStarted = true
             startSetupFlow()
@@ -134,6 +136,8 @@ class EersteSetupScherm : Fragment() {
         if (existing != null && setup.hasPersistedPermission(existing)) {
             val r = setup.ensureFolderStructure(existing)
             if (r.isSuccess) {
+                // <<< SNELLE Vlag zetten, zodat Activity meteen opstartscherm kiest >>>
+                setup.markSetupDone()
                 navigateToStart()
             } else {
                 MaterialAlertDialogBuilder(requireContext())
@@ -145,6 +149,7 @@ class EersteSetupScherm : Fragment() {
             }
             return
         }
+
         // Geen persistente root → vraag via SAF, start in /Documents indien mogelijk
         val intent = android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
             addFlags(
@@ -153,10 +158,7 @@ class EersteSetupScherm : Fragment() {
                         android.content.Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
                         android.content.Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
             )
-            putExtra(
-                DocumentsContract.EXTRA_INITIAL_URI,
-                setup.buildInitialDocumentsUri()
-            )
+            putExtra(DocumentsContract.EXTRA_INITIAL_URI, setup.buildInitialDocumentsUri())
         }
         treePickerLauncher.launch(intent)
     }

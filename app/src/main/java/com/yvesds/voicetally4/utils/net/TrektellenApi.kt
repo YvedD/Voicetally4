@@ -7,10 +7,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import java.io.BufferedWriter
 import java.io.InputStream
 import java.io.InputStreamReader
-import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.Charset
@@ -18,12 +16,13 @@ import java.util.Locale
 import kotlin.coroutines.resume
 
 /**
- * Lichtgewicht Trektellen API-wrapper met Basic Auth.
+ * Lichtgewicht Trektellen API-wrapper met Basic Auth (CredentialsStore).
  *
- * Belangrijk:
- * - Gebruik de `suspend`-varianten om **geen** I/O op de main thread te doen.
- * - De sync-methodes zijn behouden (drop-in), maar gemarkeerd als @Deprecated.
- * - Korte timeouts + nette foutafhandeling.
+ * Richtlijnen:
+ * - Gebruik de *suspend* varianten waar mogelijk (geen I/O op de main thread).
+ * - Sync-varianten blijven beschikbaar voor bestaande aanroepen, maar vermijden op main.
+ * - Korte timeouts, nette foutafhandeling, cancellable coroutines.
+ * - POST counts_save: **raw JSON array** body (ongewijzigd).
  */
 object TrektellenApi {
 
@@ -34,7 +33,9 @@ object TrektellenApi {
     )
 
     private const val BASE = "https://trektellen.nl"
-    // Korte, snappy timeouts
+    private const val UA = "VoiceTally4/1.0 (Android)" // compacte User-Agent
+
+    // Snelle, responsieve timeouts
     private const val TIMEOUT_CONNECT_MS = 3_000
     private const val TIMEOUT_READ_MS = 5_500
 
@@ -64,6 +65,7 @@ object TrektellenApi {
             instanceFollowRedirects = false
             setRequestProperty("Authorization", auth)
             setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", UA)
         }
         doRequest(conn)
     }
@@ -81,6 +83,8 @@ object TrektellenApi {
             ?: return@withContext SimpleHttpResponse(false, 401, "Geen credentials")
 
         val url = URL("$BASE/api/counts_save")
+        val bytes = jsonArrayBody.toByteArray(Charsets.UTF_8)
+
         val conn = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = TIMEOUT_CONNECT_MS
@@ -88,17 +92,18 @@ object TrektellenApi {
             doOutput = true
             useCaches = false
             instanceFollowRedirects = false
+            // Zorg voor Content-Length i.p.v. chunked → iets voorspelbaarder voor sommige servers
+            setFixedLengthStreamingMode(bytes.size)
             setRequestProperty("Authorization", auth)
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
             setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", UA)
         }
 
         try {
             conn.outputStream.use { os ->
-                BufferedWriter(OutputStreamWriter(os, Charsets.UTF_8)).use { w ->
-                    w.write(jsonArrayBody)
-                    w.flush()
-                }
+                os.write(bytes)
+                os.flush()
             }
         } catch (t: Throwable) {
             conn.disconnect()
@@ -109,14 +114,10 @@ object TrektellenApi {
     }
 
     // -----------------------------
-    // Backwards compatible sync-API (deprecated – vermijd op main thread)
+    // Backwards compatible sync-API (vermijd op main thread)
     // -----------------------------
 
-    /**
-     * **Deprecated**: gebruik [getCodesBasicAuthAsync]. Behoudt drop-in compatibiliteit.
-     * Let op: als je dit op de main thread aanroept, blokkeert het alsnog.
-     */
-    @Deprecated("Gebruik getCodesBasicAuthAsync (suspend) om niet te blokkeren op main.")
+    /** Sync variant van [getCodesBasicAuthAsync]. Vermijd aanroepen op de main thread. */
     @JvmStatic
     fun getCodesBasicAuth(
         context: Context,
@@ -125,24 +126,24 @@ object TrektellenApi {
     ): SimpleHttpResponse {
         // Voer netwerkrequest uit in IO; deze call blijft synchroon.
         return if (Looper.myLooper() == Looper.getMainLooper()) {
-            runBlocking { withContext(Dispatchers.IO) { getCodesBasicAuthAsync(context, language, versie) } }
+            runBlocking {
+                withContext(Dispatchers.IO) { getCodesBasicAuthAsync(context, language, versie) }
+            }
         } else {
             runBlocking { getCodesBasicAuthAsync(context, language, versie) }
         }
     }
 
-    /**
-     * **Deprecated**: gebruik [postCountsSaveBasicAuthAsync]. Behoudt drop-in compatibiliteit.
-     * Let op: als je dit op de main thread aanroept, blokkeert het alsnog.
-     */
-    @Deprecated("Gebruik postCountsSaveBasicAuthAsync (suspend) om niet te blokkeren op main.")
+    /** Sync variant van [postCountsSaveBasicAuthAsync]. Vermijd aanroepen op de main thread. */
     @JvmStatic
     fun postCountsSaveBasicAuth(
         context: Context,
         jsonArrayBody: String
     ): SimpleHttpResponse {
         return if (Looper.myLooper() == Looper.getMainLooper()) {
-            runBlocking { withContext(Dispatchers.IO) { postCountsSaveBasicAuthAsync(context, jsonArrayBody) } }
+            runBlocking {
+                withContext(Dispatchers.IO) { postCountsSaveBasicAuthAsync(context, jsonArrayBody) }
+            }
         } else {
             runBlocking { postCountsSaveBasicAuthAsync(context, jsonArrayBody) }
         }
@@ -158,10 +159,9 @@ object TrektellenApi {
             cont.invokeOnCancellation {
                 try { conn.disconnect() } catch (_: Throwable) {}
             }
-
             try {
                 val code = conn.responseCode // triggert de request
-                val body = readBody(conn)
+                val body = readBody(conn, code)
                 cont.resume(
                     SimpleHttpResponse(
                         ok = code in 200..299,
@@ -177,15 +177,17 @@ object TrektellenApi {
         }
     }
 
-    private fun readBody(conn: HttpURLConnection): String {
+    private fun readBody(conn: HttpURLConnection, code: Int): String {
         val contentType = (conn.contentType ?: "").lowercase(Locale.ROOT)
         val charset = extractCharset(contentType) ?: Charsets.UTF_8
+
         val stream: InputStream? = try {
-            if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+            if (code in 200..299) conn.inputStream else conn.errorStream
         } catch (_: Throwable) {
             conn.errorStream
         }
         if (stream == null) return ""
+
         return stream.buffered().use { ins ->
             InputStreamReader(ins, charset).use { reader ->
                 reader.readText()
@@ -194,7 +196,7 @@ object TrektellenApi {
     }
 
     private fun extractCharset(contentType: String): Charset? {
-        // bijv. "application/json; charset=utf-8"
+        // bv. "application/json; charset=utf-8"
         val parts = contentType.split(';')
         for (p in parts) {
             val kv = p.trim().split('=')

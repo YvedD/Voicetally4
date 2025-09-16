@@ -27,7 +27,9 @@
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.VoiceTally4">
+        android:theme="@style/Theme.VoiceTally4"
+        android:enableOnBackInvokedCallback="true">
+
 
         <!-- LAUNCHER activity (Android 12+: exported verplicht) -->
         <activity

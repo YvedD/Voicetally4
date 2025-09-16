@@ -1,7 +1,6 @@
 package com.yvesds.voicetally4.utils.codes
 
 import android.content.Context
-import android.os.Looper
 import android.util.Log
 import com.yvesds.voicetally4.utils.io.StorageUtils
 import kotlinx.coroutines.Dispatchers
@@ -22,11 +21,12 @@ import kotlin.concurrent.Volatile
 
 /**
  * Snelle code/label mapping op basis van lokaal bestand:
- * Documents/VoiceTally4/serverdata/codes.json (menselijk leesbaar)
+ * - Primair: Documents/VoiceTally4/serverdata/codes.json (menselijk leesbaar; door app of user geplaatst)
+ * - Fallback: assets/trektellen_codes.json (wordt meegebundeld in de app)
  *
  * Optimalisatie:
  * - Binaire cache in app cache-dir: cacheDir/codes_index.bin
- * - Bij volgende runs laden we die binair (veel sneller) als die nieuwer is dan codes.json
+ *   Bij volgende runs laden we die binair (veel sneller) als die nieuwer is dan codes.json.
  *
  * Velden die we nu ondersteunen:
  * - typetelling_trek
@@ -34,32 +34,37 @@ import kotlin.concurrent.Volatile
  * - neerslag
  *
  * Threading:
- * - **Nieuwe** `suspend fun ensureLoadedAsync(...)` voor I/O op Dispatchers.IO.
- * - Oude sync `ensureLoaded(...)` behouden (drop-in); die blokkeert indien op main aangeroepen.
+ * - Nieuwe `suspend fun ensureLoadedAsync(...)` voor I/O op Dispatchers.IO.
+ * - Sync `ensureLoaded(...)` blijft bestaan (drop-in); voert I/O in elk geval op Dispatchers.IO uit.
  */
 object CodesIndex {
 
     private const val TAG = "CodesIndex"
 
     private const val JSON_FILE_NAME = "codes.json"
+    private const val ASSETS_JSON = "trektellen_codes.json"
+
     private const val BIN_FILE_NAME = "codes_index.bin"
     private const val BIN_VERSION = 1
+
     private const val ARRAY_KEY = "json"
 
     // Interessante velden voor dit scherm
-    private val SUPPORTED_FIELDS = setOf(
+    private val SUPPORTED_FIELDS: Set<String> = setOf(
         "typetelling_trek",
         "wind",
         "neerslag"
     )
 
     @Volatile
-    private var loaded = false
+    private var loaded: Boolean = false
 
     // veld -> (labelLower -> code)
     private val labelToCodePerField: MutableMap<String, Map<String, String>> = mutableMapOf()
+
     // veld -> (code -> label)
     private val codeToLabelPerField: MutableMap<String, Map<String, String>> = mutableMapOf()
+
     // veld -> labels gesorteerd (UI)
     private val labelsSortedPerField: MutableMap<String, List<String>> = mutableMapOf()
 
@@ -70,7 +75,7 @@ object CodesIndex {
     // --------------
 
     /**
-     * Nieuwe, asynchrone loader. Zorgt dat de index 1x geladen is (lazy).
+     * Asynchrone loader. Zorgt dat de index 1x geladen is (lazy).
      * Voert disk I/O op Dispatchers.IO uit.
      */
     suspend fun ensureLoadedAsync(context: Context) {
@@ -85,18 +90,20 @@ object CodesIndex {
     }
 
     /**
-     * **Deprecated**: gebruik [ensureLoadedAsync]. Alleen behouden voor drop-in.
-     * Blokkeert wanneer op de main thread aangeroepen.
+     * Sync variant (drop-in). Blokkeert de caller, maar voert I/O steeds op Dispatchers.IO uit.
+     * Gebruik bij voorkeur [ensureLoadedAsync] vanuit coroutines.
      */
-    @Deprecated("Gebruik ensureLoadedAsync (suspend) om niet te blokkeren op main.")
     fun ensureLoaded(context: Context) {
         if (loaded) return
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            runBlocking(Dispatchers.IO) { doLoad(context) }
-            loaded = true
-        } else {
-            doLoad(context)
-            loaded = true
+        runBlocking {
+            withContext(Dispatchers.IO) {
+                loadMutex.withLock {
+                    if (!loaded) {
+                        doLoad(context)
+                        loaded = true
+                    }
+                }
+            }
         }
     }
 
@@ -138,29 +145,43 @@ object CodesIndex {
             val jsonFile = File(docsDir, JSON_FILE_NAME)
             val binFile = File(context.cacheDir, BIN_FILE_NAME)
 
-            val canUseBin = binFile.exists() && (!jsonFile.exists() || binFile.lastModified() >= jsonFile.lastModified())
+            val canUseBin = binFile.exists() &&
+                    (!jsonFile.exists() || binFile.lastModified() >= jsonFile.lastModified())
 
             if (canUseBin && loadFromBinary(binFile)) {
                 Log.d(TAG, "Codes geladen vanuit bin-cache: ${binFile.absolutePath}")
                 return
             }
 
-            if (!jsonFile.exists()) {
-                Log.w(TAG, "codes.json niet gevonden in ${jsonFile.absolutePath}")
-                // markeer als loaded met lege index; UI valt dan terug op resources
-                return
+            val text: String? = when {
+                jsonFile.exists() -> {
+                    jsonFile.inputStream().buffered().use { ins ->
+                        BufferedReader(InputStreamReader(ins, Charsets.UTF_8)).readText()
+                    }
+                }
+                else -> {
+                    // Fallback naar assets (meegeleverde baseline)
+                    runCatching {
+                        context.assets.open(ASSETS_JSON).use { assetIn ->
+                            assetIn.reader(Charsets.UTF_8).readText()
+                        }
+                    }.onFailure {
+                        Log.i(TAG, "Geen ${jsonFile.absolutePath} en geen assets/$ASSETS_JSON beschikbaar.")
+                    }.getOrNull()
+                }
             }
 
-            val text = jsonFile.inputStream().buffered().use { ins ->
-                BufferedReader(InputStreamReader(ins, Charsets.UTF_8)).readText()
+            if (text.isNullOrEmpty()) {
+                Log.i(TAG, "Geen codes geladen (leeg).")
+                return
             }
 
             parseIntoIndexes(text)
 
             // Probeer binaire cache weg te schrijven (best effort)
             saveToBinary(binFile)
+            Log.d(TAG, "Codes geladen (${if (jsonFile.exists()) "JSON" else "assets"}) en gecached naar bin: ${binFile.absolutePath}")
 
-            Log.d(TAG, "Codes geladen uit JSON en gecached naar bin: ${binFile.absolutePath}")
         } catch (t: Throwable) {
             Log.e(TAG, "Fout bij laden codes: ${t.message}", t)
             // maps kunnen leeg blijven; aanroeper kan dit controleren met isReady()
@@ -201,6 +222,7 @@ object CodesIndex {
         tmpByField.forEach { (veld, list) ->
             // sorteren op sortering en daarna label
             val sorted = list.sortedWith(compareBy<CodeItem> { it.sort }.thenBy { it.label.lowercase(locale) })
+
             val labels = ArrayList<String>(sorted.size)
             val l2c = HashMap<String, String>(sorted.size)
             val c2l = HashMap<String, String>(sorted.size)
@@ -227,16 +249,15 @@ object CodesIndex {
                     out.writeUTF(veld)
                     val l2c = labelToCodePerField[veld] ?: emptyMap()
                     out.writeInt(labels.size)
+                    val locale = Locale.getDefault()
                     for (label in labels) {
                         out.writeUTF(label)
-                        out.writeUTF(l2c[label.lowercase(Locale.getDefault())] ?: "")
+                        out.writeUTF(l2c[label.lowercase(locale)] ?: "")
                     }
                 }
                 out.flush()
             }
-        }.onFailure {
-            Log.w(TAG, "Kon binaire cache niet wegschrijven: ${it.message}")
-        }
+        }.onFailure { Log.w(TAG, "Kon binaire cache niet wegschrijven: ${it.message}") }
     }
 
     /** Binaire lees: inverse van saveToBinary */
@@ -254,7 +275,6 @@ object CodesIndex {
                 repeat(fieldCount) {
                     val veld = ins.readUTF()
                     val count = ins.readInt()
-
                     val labels = ArrayList<String>(count)
                     val l2c = HashMap<String, String>(count)
                     val c2l = HashMap<String, String>(count)

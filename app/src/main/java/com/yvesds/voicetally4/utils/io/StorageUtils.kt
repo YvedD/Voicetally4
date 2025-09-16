@@ -7,21 +7,40 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
  * Hulpfuncties voor opslagpaden en publiek wegschrijven.
  *
- * - Voorkeurspad voor jouw project:  Documents/VoiceTally4[/subdir]
- * - Fallback (alleen als publiek echt niet lukt): app-private Documents/VoiceTally4[/subdir]
+ * Ontwerp:
+ * - Voorkeurspad voor jouw project: Documents/VoiceTally4[/subdir].
+ * - Fallback (alleen als publiek echt niet lukt): app-private Documents/VoiceTally4[/subdir].
+ * - Android 10+ (Q+): schrijven naar publieke *Documents* via MediaStore (RELATIVE_PATH).
+ * - Android 9-: schrijven naar publieke *Documents* via File API (kan WRITE_EXTERNAL_STORAGE vereisen).
+ *
+ * **Belangrijk voor performance/UX**
+ * - Roep de *suspend* varianten aan vanuit coroutines (I/O op Dispatchers.IO).
+ * - De sync-varianten bestaan voor drop-in compat, maar doe ze niet op de main thread.
  */
 object StorageUtils {
 
     private const val TAG = "StorageUtils"
+    private const val PUBLIC_ROOT_DIR_NAME = "VoiceTally4"
+    private const val MIME_JSON = "application/json"
+
+    // ---------------------------------------------------------------------------------------------
+    // Paden
+    // ---------------------------------------------------------------------------------------------
 
     /**
      * Geeft de VoiceTally4-basis in Documents terug, met optionele submap.
      * Maakt de map(pen) aan indien ze nog niet bestaan.
+     *
+     * Let op: op Android 10+ met scoped storage is *directe* File-toegang tot publieke
+     * Documents beperkt; gebruik dit vooral voor pad-weergave of voor bestanden die door
+     * andere processen (of SAF) zijn geplaatst. Voor *schrijven* gebruik je de save*-functies.
      *
      * @param subdir bv. "serverdata" of null/"" voor de basis.
      */
@@ -32,8 +51,8 @@ object StorageUtils {
 
         // App-private Documents/VoiceTally4 (fallback)
         val appDocsBase = File(
-            context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS),
-            "VoiceTally4"
+            context.applicationContext.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS),
+            PUBLIC_ROOT_DIR_NAME
         )
 
         // Gebruik publieke map als die al bestaat; anders de app-private (en maak die aan)
@@ -46,14 +65,17 @@ object StorageUtils {
         return target
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Publiek wegschrijven (String / JSON) — **gebruik bij voorkeur de async-variant**
+    // ---------------------------------------------------------------------------------------------
+
     /**
-     * Schrijft JSON-tekst publiek naar:
-     *   Documents/<relativeSubdir>/<fileName>
+     * Schrijft JSON-/tekstinhoud publiek naar: Documents/<relativeSubdir>/<fileName>.
      *
      * Android 10+ (Q+): via MediaStore met RELATIVE_PATH (geen extra permissies nodig).
-     * Android 9 en lager: via File API naar de publieke Documents-map (kan WRITE_EXTERNAL_STORAGE vereisen).
+     * Android 9-      : via File API naar publieke Documents (kan WRITE_EXTERNAL_STORAGE vereisen).
      *
-     * @return De publieke Uri op Android 10+; op oudere versies null (bestand staat dan als File op schijf).
+     * @return De publieke Uri op Android 10+; op oudere versies null (bestand staat dan als File).
      */
     @JvmStatic
     fun saveJsonToPublicDocuments(
@@ -61,55 +83,13 @@ object StorageUtils {
         relativeSubdir: String,
         fileName: String,
         content: String
-    ): Uri? {
-        val relativePath = "Documents/$relativeSubdir"
-
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                // Verwijder eventueel bestaand exemplaar met dezelfde naam/relatief pad
-                deleteIfExistsQ(context, relativePath, fileName)
-
-                val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                val values = ContentValues().apply {
-                    put(MediaStore.Files.FileColumns.DISPLAY_NAME, fileName)
-                    put(MediaStore.Files.FileColumns.MIME_TYPE, "application/json")
-                    put(MediaStore.Files.FileColumns.RELATIVE_PATH, relativePath)
-                }
-                val uri = context.contentResolver.insert(collection, values)
-                if (uri != null) {
-                    context.contentResolver.openOutputStream(uri)?.use { os ->
-                        os.write(content.toByteArray(Charsets.UTF_8))
-                        os.flush()
-                    }
-                } else {
-                    Log.w(TAG, "Kon geen Uri aanmaken in MediaStore (null terug)")
-                }
-                uri
-            } catch (t: Throwable) {
-                Log.e(TAG, "Public save via MediaStore mislukt: ${t.message}", t)
-                // Laatste redmiddel: probeer app-private als absoluut noodzakelijke fallback
-                writeToAppPrivateDocuments(context, relativeSubdir, fileName, content)
-                null
-            }
-        } else {
-            // Oudere Android-versies: direct naar publieke Documents
-            try {
-                val base = File(getPublicDocumentsVoiceTallyDir(), relativeSubdir).apply { mkdirs() }
-                val outFile = File(base, fileName)
-                outFile.writeText(content, Charsets.UTF_8)
-                null
-            } catch (t: Throwable) {
-                Log.e(TAG, "Public save (pre-Q) mislukt: ${t.message}", t)
-                // Fallback naar app-private
-                writeToAppPrivateDocuments(context, relativeSubdir, fileName, content)
-                null
-            }
-        }
-    }
+    ): Uri? = saveStringToPublicDocuments(context, relativeSubdir, fileName, content)
 
     /**
-     * Alias met de signatuur die elders in de app al gebruikt wordt.
+     * Alias-signatuur die elders in de app gebruikt wordt.
      * Schrijft willekeurige tekst (JSON/…) naar Documents/<subDir>/<fileName>.
+     *
+     * **Niet op main-thread aanroepen**; gebruik zo mogelijk [saveStringToPublicDocumentsAsync].
      */
     @JvmStatic
     fun saveStringToPublicDocuments(
@@ -117,14 +97,67 @@ object StorageUtils {
         subDir: String,
         fileName: String,
         content: String
-    ): Uri? = saveJsonToPublicDocuments(
-        context = context,
-        relativeSubdir = subDir,
-        fileName = fileName,
-        content = content
-    )
+    ): Uri? {
+        val ctx = context.applicationContext
+        val relativePath = "Documents/${subDir.trimStart('/')}"
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // MediaStore-pad
+            try {
+                deleteIfExistsQ(ctx, relativePath, fileName)
+                val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                val values = ContentValues().apply {
+                    put(MediaStore.Files.FileColumns.DISPLAY_NAME, fileName)
+                    put(MediaStore.Files.FileColumns.MIME_TYPE, MIME_JSON)
+                    put(MediaStore.Files.FileColumns.RELATIVE_PATH, relativePath)
+                }
+                val uri = ctx.contentResolver.insert(collection, values)
+                if (uri != null) {
+                    ctx.contentResolver.openOutputStream(uri)?.use { os ->
+                        os.write(content.toByteArray(Charsets.UTF_8))
+                        os.flush()
+                    }
+                } else {
+                    Log.w(TAG, "Kon geen Uri aanmaken in MediaStore (null)")
+                }
+                uri
+            } catch (t: Throwable) {
+                Log.e(TAG, "Public save via MediaStore mislukt: ${t.message}", t)
+                // Laatste redmiddel: probeer app-private als absoluut noodzakelijke fallback
+                writeToAppPrivateDocuments(ctx, subDir, fileName, content)
+                null
+            }
+        } else {
+            // Pre-Q: direct File-schrijf naar publieke Documents
+            try {
+                val base = File(getPublicDocumentsVoiceTallyDir(), subDir).apply { mkdirs() }
+                val outFile = File(base, fileName)
+                outFile.writeText(content, Charsets.UTF_8)
+                null
+            } catch (t: Throwable) {
+                Log.e(TAG, "Public save (pre-Q) mislukt: ${t.message}", t)
+                // Fallback naar app-private
+                writeToAppPrivateDocuments(ctx, subDir, fileName, content)
+                null
+            }
+        }
+    }
 
-    // --- intern: helpers ---
+    /**
+     * Asynchrone variant die I/O op [Dispatchers.IO] uitvoert.
+     */
+    @JvmStatic
+    suspend fun saveStringToPublicDocumentsAsync(
+        context: Context,
+        subDir: String,
+        fileName: String,
+        content: String
+    ): Uri? = withContext(Dispatchers.IO) {
+        saveStringToPublicDocuments(context, subDir, fileName, content)
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Intern
+    // ---------------------------------------------------------------------------------------------
 
     private fun writeToAppPrivateDocuments(
         context: Context,
@@ -134,7 +167,7 @@ object StorageUtils {
     ) {
         val base = File(
             context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS),
-            "VoiceTally4/${relativeSubdir.trimStart('/')}"
+            "$PUBLIC_ROOT_DIR_NAME/${relativeSubdir.trimStart('/')}"
         ).apply { mkdirs() }
         val outFile = File(base, fileName)
         outFile.writeText(content, Charsets.UTF_8)
@@ -149,7 +182,7 @@ object StorageUtils {
             @Suppress("DEPRECATION")
             File(Environment.getExternalStorageDirectory(), "Documents")
         }
-        return File(documentsDir, "VoiceTally4")
+        return File(documentsDir, PUBLIC_ROOT_DIR_NAME)
     }
 
     /**
@@ -158,9 +191,11 @@ object StorageUtils {
     private fun deleteIfExistsQ(context: Context, relativePath: String, fileName: String) {
         try {
             val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            val sel = "${MediaStore.Files.FileColumns.RELATIVE_PATH}=? AND ${MediaStore.Files.FileColumns.DISPLAY_NAME}=?"
+            val sel =
+                "${MediaStore.Files.FileColumns.RELATIVE_PATH}=? AND ${MediaStore.Files.FileColumns.DISPLAY_NAME}=?"
             val args = arrayOf(relativePath, fileName)
-            context.contentResolver.query(collection, arrayOf(MediaStore.Files.FileColumns._ID), sel, args, null)
+            context.contentResolver
+                .query(collection, arrayOf(MediaStore.Files.FileColumns._ID), sel, args, null)
                 ?.use { cursor ->
                     while (cursor.moveToNext()) {
                         val id = cursor.getLong(0)

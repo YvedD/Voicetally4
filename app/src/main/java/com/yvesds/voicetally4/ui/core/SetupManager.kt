@@ -12,6 +12,7 @@ import androidx.documentfile.provider.DocumentFile
  * - Bewaren & ophalen van de gekozen Documents-root (SAF Tree URI)
  * - Checken/aanmaken van VoiceTally4 + submappen
  * - Controleren of setup volledig is
+ * - Snelpad: setup_done_flag voor snelle startDestination-keuze (zonder disk I/O)
  */
 class SetupManager(
     private val context: Context,
@@ -20,9 +21,28 @@ class SetupManager(
 
     companion object {
         private const val PREFS_KEY_TREE_URI = "pref_documents_tree_uri"
+        private const val PREFS_KEY_SETUP_DONE = "setup_done_flag"
+
         private const val DIR_APP_ROOT = "VoiceTally4"
         private val REQUIRED_SUBDIRS = listOf("assets", "exports", "serverdata")
     }
+
+    // -------------------- Snelle vlag --------------------
+
+    /** Snelle, pure-SharedPrefs check (geen SAF/disk I/O). */
+    fun isSetupDoneFlag(): Boolean = prefs.getBoolean(PREFS_KEY_SETUP_DONE, false)
+
+    /** Zet de vlag wanneer setup bevestigd klaar is. */
+    fun markSetupDone() {
+        prefs.edit().putBoolean(PREFS_KEY_SETUP_DONE, true).apply()
+    }
+
+    /** (Optioneel) vlag wissen, bv. voor debug/reset. */
+    fun clearSetupDoneFlag() {
+        prefs.edit().remove(PREFS_KEY_SETUP_DONE).apply()
+    }
+
+    // -------------------- SAF & mappen --------------------
 
     fun getPersistedTreeUri(): Uri? {
         val str = prefs.getString(PREFS_KEY_TREE_URI, null) ?: return null
@@ -50,13 +70,13 @@ class SetupManager(
         val appRoot = docsTree.findFile(DIR_APP_ROOT)?.takeIf { it.isDirectory } ?: return false
 
         // Alle verplichte subfolders aanwezig?
-        val names: Set<String?> = appRoot.listFiles().map { it.name }.toSet()
+        val names: Set<String> = appRoot.listFiles().mapNotNull { it.name }.toSet()
         return REQUIRED_SUBDIRS.all { names.contains(it) }
     }
 
     /**
      * Maakt (indien nodig) VoiceTally4 + submappen aan.
-     * Vooraf: zorg dat je WRITE-permission op de treeUri hebt (via SAF + persist).
+     * Vooraf: zorg dat je WRITE-permissie op de treeUri hebt (via SAF + persist).
      */
     fun ensureFolderStructure(treeUri: Uri): Result<Unit> {
         val docsTree = DocumentFile.fromTreeUri(context, treeUri)
@@ -74,18 +94,14 @@ class SetupManager(
         return Result.success(Unit)
     }
 
-    /**
-     * Bouw een INIT-hint naar /Documents om de picker daar te laten starten (optioneel).
-     */
+    /** Bouw een INIT-hint naar /Documents om de picker daar te laten starten (optioneel). */
     fun buildInitialDocumentsUri(): Uri =
         DocumentsContract.buildDocumentUri(
             "com.android.externalstorage.documents",
             "primary:Documents"
         )
 
-    /**
-     * Persist de door de gebruiker verleende permissie (gebruik de flags uit het intent-resultaat).
-     */
+    /** Persist de door de gebruiker verleende permissie (gebruik de flags uit het intent-resultaat). */
     fun persistUriPermission(uri: Uri, grantedFlags: Int) {
         val mask = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         val flags = grantedFlags and mask

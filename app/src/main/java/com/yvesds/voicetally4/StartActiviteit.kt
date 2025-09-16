@@ -8,16 +8,18 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.navigation.fragment.NavHostFragment
 import com.yvesds.voicetally4.databinding.ActivityMainBinding
+import com.yvesds.voicetally4.ui.core.SetupManager
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
 /**
- * Launcher-activity:
- * - Hilt-ready
- * - Past Day/Night toe via SharedPreferences (injectie via Hilt)
- * - Toont NavHost (activity_main.xml) met StartScherm als startDestination
- * - Edge-to-edge met nette insets-handling
+ * Launcher-activity (edge-to-edge + runtime startDestination):
+ * - Hilt injectie voor SharedPreferences
+ * - Past thema toe na injectie, vóór content inflation
+ * - Stelt NavGraph.startDestination in op basis van snelle setup-vlag (zonder I/O)
+ * - Robuust ophalen van NavHostFragment (ID: R.id.nav_host uit activity_main.xml)
  */
 @AndroidEntryPoint
 class StartActiviteit : AppCompatActivity() {
@@ -27,31 +29,54 @@ class StartActiviteit : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Edge-to-edge zonder Compose
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        super.onCreate(savedInstanceState)
 
-        // Thema instellen vóór super.onCreate() om UI-flicker te vermijden
+        // Thema zetten nadat Hilt injecteerde, maar vóór content inflation
         applyThemeFromPrefs()
 
-        super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // System bar insets doorgeven aan de root container
         applyEdgeToEdgeInsets(binding.root)
-        // NavHost zit in activity_main.xml -> nav_graph -> StartScherm
+
+        // --------- Kies startDestination vóór de eerste render ---------
+        val setup = SetupManager(this, sharedPrefs)
+
+        // Belangrijk: ID komt uit activity_main.xml -> android:id="@+id/nav_host"
+        val navHost: NavHostFragment =
+            supportFragmentManager.findFragmentById(R.id.nav_host) as? NavHostFragment
+                ?: throw IllegalStateException(
+                    "NavHostFragment niet gevonden. Controleer dat activity_main.xml een " +
+                            "FragmentContainerView met id @id/nav_host bevat."
+                )
+
+        val navController = navHost.navController
+        // Inflate altijd de graph uit resources, zodat we startDestination kunnen overschrijven
+        val graph = navController.navInflater.inflate(R.navigation.nav_graph)
+
+        val startDest = if (setup.isSetupDoneFlag()) {
+            R.id.opstartScherm
+        } else {
+            R.id.eersteSetupScherm
+        }
+
+        if (graph.startDestinationId != startDest) {
+            graph.setStartDestination(startDest)
+        }
+        navController.graph = graph
+        // ----------------------------------------------------------------------
     }
 
     private fun applyThemeFromPrefs() {
         when (sharedPrefs.getString(SettingsKeys.KEY_THEME_MODE, SettingsKeys.THEME_DARK)) {
             SettingsKeys.THEME_LIGHT -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
             SettingsKeys.THEME_SYSTEM -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
-            else -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES) // default: donker
+            else -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         }
     }
 
     private fun applyEdgeToEdgeInsets(root: View) {
-        // Bewaar initiële padding zodat we system bar insets erbij kunnen optellen
         val initialPaddingLeft = root.paddingLeft
         val initialPaddingTop = root.paddingTop
         val initialPaddingRight = root.paddingRight
@@ -67,61 +92,13 @@ class StartActiviteit : AppCompatActivity() {
             )
             insets
         }
-        // Vraag meteen een nieuwe insets pass aan voor huidige view-hiërarchie
         root.requestApplyInsets()
-    }
-
-    companion object {
-        /**
-         * API-compatibiliteit: laat bestaande referenties naar StartActiviteit.PREFS_NAME/KEY_*
-         * gewoon doorverwijzen naar SettingsKeys. Markeer als deprecated.
-         */
-        @Deprecated(
-            message = "Gebruik SettingsKeys.PREFS_NAME",
-            replaceWith = ReplaceWith("SettingsKeys.PREFS_NAME")
-        )
-        const val PREFS_NAME: String = SettingsKeys.PREFS_NAME
-
-        @Deprecated(
-            message = "Gebruik SettingsKeys.KEY_PERMISSIONS_DONE",
-            replaceWith = ReplaceWith("SettingsKeys.KEY_PERMISSIONS_DONE")
-        )
-        const val KEY_PERMISSIONS_DONE: String = SettingsKeys.KEY_PERMISSIONS_DONE
-
-        @Deprecated(
-            message = "Gebruik SettingsKeys.KEY_THEME_MODE",
-            replaceWith = ReplaceWith("SettingsKeys.KEY_THEME_MODE")
-        )
-        const val KEY_THEME_MODE: String = SettingsKeys.KEY_THEME_MODE
-
-        @Deprecated(
-            message = "Gebruik SettingsKeys.THEME_DARK",
-            replaceWith = ReplaceWith("SettingsKeys.THEME_DARK")
-        )
-        const val THEME_DARK: String = SettingsKeys.THEME_DARK
-
-        @Deprecated(
-            message = "Gebruik SettingsKeys.THEME_LIGHT",
-            replaceWith = ReplaceWith("SettingsKeys.THEME_LIGHT")
-        )
-        const val THEME_LIGHT: String = SettingsKeys.THEME_LIGHT
-
-        @Deprecated(
-            message = "Gebruik SettingsKeys.THEME_SYSTEM",
-            replaceWith = ReplaceWith("SettingsKeys.THEME_SYSTEM")
-        )
-        const val THEME_SYSTEM: String = SettingsKeys.THEME_SYSTEM
     }
 }
 
-/**
- * Gecentraliseerde sleutels/waarden voor instellingen.
- * Bewust hier gehouden (zelfde bestand) om extra projectwijzigingen te vermijden.
- */
+/** Gecentraliseerde instellingen-sleutels. */
 object SettingsKeys {
     const val PREFS_NAME = "voicetally_prefs"
-
-    // Flags
     const val KEY_PERMISSIONS_DONE = "permissions_done_once"
 
     // Thema

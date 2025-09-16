@@ -18,12 +18,18 @@ import kotlin.math.roundToInt
 /**
  * Haalt "current" weerdata op via Open-Meteo.
  * Geen Google Play Services nodig. Je levert gewoon (lat, lon) aan.
+ *
+ * Focus: korte timeouts, nette foutafhandeling, cancellable I/O, geen caching (per jouw wens).
  */
 class WeatherManager(private val appContext: Context) {
 
     companion object {
         private const val TAG = "WeatherManager"
         private const val WEATHER_API = "https://api.open-meteo.com/v1/forecast"
+
+        // Kort en responsief
+        private const val CONNECT_TIMEOUT_MS = 3_000
+        private const val READ_TIMEOUT_MS = 5_000
     }
 
     /**
@@ -33,40 +39,41 @@ class WeatherManager(private val appContext: Context) {
     suspend fun fetchCurrentWeather(lat: Double, lon: Double): WeatherResponse? = withContext(Dispatchers.IO) {
         try {
             // Open-Meteo: "current" parameters + eenheden
+            // Let op: 'weather_code' (met underscore) is de correcte sleutel in "current".
             val urlStr = buildString {
-                append("$WEATHER_API?latitude=$lat&longitude=$lon")
-                append("&current=temperature_2m,precipitation,weathercode,")
+                append(WEATHER_API)
+                append("?latitude=")
+                append(String.format(Locale.US, "%.5f", lat))
+                append("&longitude=")
+                append(String.format(Locale.US, "%.5f", lon))
+                append("&current=")
+                append("temperature_2m,precipitation,weather_code,")
                 append("wind_speed_10m,wind_direction_10m,cloud_cover,visibility,pressure_msl")
                 append("&wind_speed_unit=kmh&precipitation_unit=mm&timezone=auto")
             }
 
-            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 8000
-                readTimeout = 8000
-                requestMethod = "GET"
-            }
-            val response = conn.inputStream.bufferedReader().use { it.readText() }
-            conn.disconnect()
+            val body = httpGetCancelable(URL(urlStr)) ?: return@withContext null
 
-            val json = JSONObject(response)
-            val current = json.getJSONObject("current")
+            val json = JSONObject(body)
+            val current = json.optJSONObject("current") ?: return@withContext null
 
             val locality = reverseGeocodeLocality(lat, lon)
 
             return@withContext WeatherResponse(
                 locationName = locality,
-                temperature   = current.optDouble("temperature_2m", Double.NaN),
+                temperature  = current.optDouble("temperature_2m", Double.NaN),
                 precipitation = current.optDouble("precipitation", 0.0),
-                weathercode   = current.optInt("weathercode", -1),
-                windspeed     = current.optDouble("wind_speed_10m", 0.0),
+                // Open-Meteo gebruikt "weather_code". Val desnoods terug op "weathercode".
+                weathercode  = current.optInt("weather_code", current.optInt("weathercode", -1)),
+                windspeed    = current.optDouble("wind_speed_10m", 0.0),
                 winddirection = current.optInt("wind_direction_10m", 0),
-                pressure      = current.optDouble("pressure_msl", 0.0).roundToInt(),
-                cloudcover    = current.optInt("cloud_cover", 0),
-                visibility    = current.optInt("visibility", 0), // meters
-                time          = current.optString("time", "")
+                pressure     = current.optDouble("pressure_msl", 0.0).roundToInt(),
+                cloudcover   = current.optInt("cloud_cover", 0),
+                visibility   = current.optInt("visibility", 0), // meters
+                time         = current.optString("time", "")
             )
         } catch (e: Exception) {
-            Log.e(TAG, "Fout bij ophalen weer: ${e.message}", e)
+            Log.w(TAG, "Weer ophalen mislukt: ${e.message}")
             null
         }
     }
@@ -93,10 +100,8 @@ class WeatherManager(private val appContext: Context) {
     /** 0..360° naar kompasrichting (N, NNO, NO, ...). */
     fun toCompass(degrees: Int): String {
         val dirs = listOf(
-            "N", "NNO", "NO", "ONO",
-            "O", "OZO", "ZO", "ZZO",
-            "Z", "ZZW", "ZW", "WZW",
-            "W", "WNW", "NW", "NNW"
+            "N", "NNO", "NO", "ONO", "O", "OZO", "ZO", "ZZO",
+            "Z", "ZZW", "ZW", "WZW", "W", "WNW", "NW", "NNW"
         )
         val index = (((degrees / 22.5) + 0.5).toInt()) % 16
         return dirs[index]
@@ -106,7 +111,7 @@ class WeatherManager(private val appContext: Context) {
     fun toOctas(percent: Int): Int = (percent / 12.5).roundToInt().coerceIn(0, 8)
 
     /**
-     * Open-Meteo weathercode → 'Neerslag'-spinner opties.
+     * Open-Meteo weather_code → 'Neerslag'-spinner opties.
      * Opties: geen - regen - motregen - mist - hagel - sneeuw - sneeuw- of zandstorm - onweer
      */
     fun mapWeatherCodeToNeerslagOption(code: Int): String = when (code) {
@@ -121,16 +126,16 @@ class WeatherManager(private val appContext: Context) {
 
     /**
      * Reverse-geocode naar locality/plaatsnaam.
-     * - Op Android 13+ (API 33) gebruiken we de niet-verouderde listener-API.
-     * - Op oudere versies gebruiken we reflectie om de oude API aan te roepen (geen @Suppress nodig).
+     * - Op Android 13+ (API 33) gebruiken we de listener-API (niet-deprecated).
+     * - Op oudere versies de klassieke API (zonder reflectie).
+     * Geen caching: we doen dit enkelvoudig per aanroep (zoals gevraagd).
      */
     private suspend fun reverseGeocodeLocality(lat: Double, lon: Double): String? =
         withContext(Dispatchers.IO) {
             try {
                 val geocoder = Geocoder(appContext, Locale.getDefault())
-
                 if (Build.VERSION.SDK_INT >= 33) {
-                    // Nieuwe, niet-deprecated API met callback
+                    // Nieuwe API met callback (suspend + cancellable)
                     return@withContext suspendCancellableCoroutine { cont ->
                         geocoder.getFromLocation(lat, lon, 1, object : Geocoder.GeocodeListener {
                             override fun onGeocode(addresses: MutableList<Address>) {
@@ -144,19 +149,54 @@ class WeatherManager(private val appContext: Context) {
                         })
                     }
                 } else {
-                    // Oudere API via reflectie (vermijdt directe referentie → geen deprecation warning)
-                    val method = Geocoder::class.java.getMethod(
-                        "getFromLocation",
-                        Double::class.javaPrimitiveType,
-                        Double::class.javaPrimitiveType,
-                        Integer.TYPE
-                    )
-                    val result = method.invoke(geocoder, lat, lon, 1) as? List<*>
-                    val addr = result?.firstOrNull() as? Address
-                    return@withContext addr?.locality
+                    @Suppress("DEPRECATION")
+                    val result = geocoder.getFromLocation(lat, lon, 1)
+                    return@withContext result?.firstOrNull()?.locality
                 }
             } catch (_: Exception) {
-                return@withContext null
+                null
+            }
+        }
+
+    // --- Netwerk (cancellable) ---
+
+    /**
+     * HTTP GET met korte timeouts, status-check en cancellation-support.
+     * @return response body bij 2xx; anders null.
+     */
+    private suspend fun httpGetCancelable(url: URL): String? =
+        suspendCancellableCoroutine { cont ->
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+                requestMethod = "GET"
+                setRequestProperty("Accept", "application/json")
+                // Een beknopte UA helpt sommige gateways
+                setRequestProperty("User-Agent", "VoiceTally4/1.0 (Android)")
+            }
+
+            cont.invokeOnCancellation {
+                try { conn.disconnect() } catch (_: Throwable) {}
+            }
+
+            try {
+                conn.connect()
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                val body = stream?.bufferedReader()?.use { it.readText() } ?: ""
+
+                if (code in 200..299) {
+                    if (cont.isActive) cont.resume(body)
+                } else {
+                    // Compacte, veilige logging
+                    Log.w(TAG, "HTTP ${code} bij ${url.host}${url.path}")
+                    if (cont.isActive) cont.resume(null)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "HTTP fout: ${e.message}")
+                if (cont.isActive) cont.resume(null)
+            } finally {
+                try { conn.disconnect() } catch (_: Throwable) {}
             }
         }
 }
