@@ -17,7 +17,6 @@ import java.io.DataOutputStream
 import java.io.File
 import java.io.InputStreamReader
 import java.util.Locale
-import kotlin.concurrent.Volatile
 
 /**
  * Snelle code/label mapping op basis van lokaal bestand:
@@ -34,8 +33,8 @@ import kotlin.concurrent.Volatile
  * - neerslag
  *
  * Threading:
- * - Nieuwe `suspend fun ensureLoadedAsync(...)` voor I/O op Dispatchers.IO.
- * - Sync `ensureLoaded(...)` blijft bestaan (drop-in); voert I/O in elk geval op Dispatchers.IO uit.
+ * - `suspend fun ensureLoadedAsync(...)` voor I/O op Dispatchers.IO.
+ * - Sync `ensureLoaded(...)` blijft bestaan (drop-in); voert I/O alsnog off-main uit.
  */
 object CodesIndex {
 
@@ -45,7 +44,7 @@ object CodesIndex {
     private const val ASSETS_JSON = "trektellen_codes.json"
 
     private const val BIN_FILE_NAME = "codes.bin"
-    private const val BIN_VERSION = 2 // ↑ verhoogd door uitgebreidere header (size+mtime)
+    private const val BIN_VERSION = 2 // Header: version,int + sourceSize,long + sourceMtime,long + fieldCount,int
 
     private const val ARRAY_KEY = "json"
 
@@ -59,19 +58,21 @@ object CodesIndex {
     @Volatile
     private var loaded: Boolean = false
 
-    // veld -> (labelLower -> code)
+    // veld -> (labelLower -> code)   (lookup)
     private val labelToCodePerField: MutableMap<String, Map<String, String>> = mutableMapOf()
-
-    // veld -> (code -> label)
+    // veld -> (code -> label)        (inverse lookup)
     private val codeToLabelPerField: MutableMap<String, Map<String, String>> = mutableMapOf()
-
-    // veld -> labels gesorteerd (UI)
+    // veld -> labels gesorteerd (UI volgorde)
     private val labelsSortedPerField: MutableMap<String, List<String>> = mutableMapOf()
+
+    // Debug/diagnose
+    private var lastSource: String? = null          // "bin" | "json" | "assets"
+    private var lastBinPath: String? = null
 
     private val loadMutex = Mutex()
 
     // --------------
-    // Publiek API
+    // Publiek API (laden)
     // --------------
 
     /**
@@ -107,6 +108,23 @@ object CodesIndex {
         }
     }
 
+    /** Handig om te weten of de index bruikbaar is. */
+    fun isReady(): Boolean = loaded && labelsSortedPerField.isNotEmpty()
+
+    /** Optioneel: index ongeldig maken (bv. na bestand-update). */
+    fun invalidate() {
+        loaded = false
+        labelToCodePerField.clear()
+        codeToLabelPerField.clear()
+        labelsSortedPerField.clear()
+        lastSource = null
+        lastBinPath = null
+    }
+
+    // --------------
+    // Publiek API (queries)
+    // --------------
+
     /** Labels voor spinner, gesorteerd. Lege lijst indien onbekend veld of niet geladen. */
     fun getLabels(veld: String): List<String> = labelsSortedPerField[veld] ?: emptyList()
 
@@ -124,15 +142,96 @@ object CodesIndex {
         return map[code]
     }
 
-    /** Handig om te weten of de index bruikbaar is. */
-    fun isReady(): Boolean = loaded && labelsSortedPerField.isNotEmpty()
+    /** Alle beschikbare velden die geladen zijn (bv. ["typetelling_trek","wind","neerslag"]). */
+    fun getAllFields(): Set<String> = labelsSortedPerField.keys
 
-    /** Optioneel: index ongeldig maken (bv. na bestand-update). */
-    fun invalidate() {
-        loaded = false
-        labelToCodePerField.clear()
-        codeToLabelPerField.clear()
-        labelsSortedPerField.clear()
+    /** Snel controleren of een veld aanwezig is. */
+    fun hasField(veld: String): Boolean = labelsSortedPerField.containsKey(veld)
+
+    /**
+     * Servercodes in dezelfde volgorde als [getLabels].
+     * Handig om later snel de gekozen label-index naar code te mappen.
+     */
+    fun getCodes(veld: String): List<String> {
+        val labels = labelsSortedPerField[veld] ?: return emptyList()
+        val l2c = labelToCodePerField[veld] ?: return emptyList()
+        val locale = Locale.getDefault()
+        return labels.mapNotNull { l2c[it.lowercase(locale)] }
+    }
+
+    /** Kant-en-klare (label, code) paren in UI-volgorde. */
+    fun labelCodePairs(veld: String): List<Pair<String, String>> {
+        val labels = labelsSortedPerField[veld] ?: return emptyList()
+        val l2c = labelToCodePerField[veld] ?: return emptyList()
+        val locale = Locale.getDefault()
+        return labels.mapNotNull { label ->
+            val code = l2c[label.lowercase(locale)] ?: return@mapNotNull null
+            label to code
+        }
+    }
+
+    /**
+     * Tolerant zoeken naar code op basis van user input (trim/case-insensitive).
+     * Matching: exact → startsWith → contains.
+     */
+    fun matchLabel(veld: String, invoer: String?): String? {
+        val input = invoer?.trim()?.lowercase(Locale.getDefault()) ?: return null
+        val l2c = labelToCodePerField[veld] ?: return null
+
+        // exact
+        l2c[input]?.let { return it }
+        // startsWith
+        l2c.keys.firstOrNull { it.startsWith(input) }?.let { return l2c[it] }
+        // contains
+        l2c.keys.firstOrNull { it.contains(input) }?.let { return l2c[it] }
+
+        return null
+    }
+
+    /** Alias voor [codeToLabel] met een duidelijkere naam. */
+    fun findLabelForCode(veld: String, code: String?): String? = codeToLabel(veld, code)
+
+    /**
+     * Snelle check of de binaire cache **verouderd** is t.o.v. codes.json.
+     * - true  → (her)build aanbevolen
+     * - false → bin up-to-date (of JSON ontbreekt maar bin is aanwezig)
+     */
+    fun needsRebuild(context: Context): Boolean {
+        val jsonFile = File(StorageUtils.getPublicAppDir(context, "serverdata"), JSON_FILE_NAME)
+        val binFile = File(StorageUtils.getPublicAppDir(context, "binaries"), BIN_FILE_NAME)
+
+        val jsonExists = jsonFile.exists()
+        if (!binFile.exists()) {
+            // Geen bin → rebuild alleen zinvol als er een JSON-bron is
+            return jsonExists
+        }
+
+        return try {
+            DataInputStream(BufferedInputStream(binFile.inputStream())).use { ins ->
+                val ver = ins.readInt()
+                val savedSize = ins.readLong()
+                val savedMtime = ins.readLong()
+                if (ver != BIN_VERSION) return true
+                if (jsonExists) {
+                    (savedSize != jsonFile.length() || savedMtime != jsonFile.lastModified())
+                } else {
+                    // Geen JSON, maar wel bin: we beschouwen de bin als bruikbaar
+                    false
+                }
+            }
+        } catch (_: Throwable) {
+            // Header niet leesbaar → rebuild indien JSON aanwezig is
+            jsonExists
+        }
+    }
+
+    /** Korte diagnose-string met bron + aantal items per veld. */
+    fun debugStats(): String {
+        val source = lastSource ?: "onbekend"
+        val fields = labelsSortedPerField.size
+        val perField = labelsSortedPerField.entries.joinToString(", ") { (k, v) -> "$k=${v.size}" }
+        val bin = lastBinPath ?: "-"
+        return "bron=$source; velden=$fields; items=[$perField]; bin=$bin"
     }
 
     // --------------
@@ -160,7 +259,8 @@ object CodesIndex {
                     expectedSourceMtime = if (jsonExists) jsonMtime else null
                 )
                 if (loadedOk) {
-                    // Minimaal loggen: enkel nuttige hint bij ontwikkelen
+                    lastSource = "bin"
+                    lastBinPath = binFile.absolutePath
                     Log.d(TAG, "Codes geladen vanuit bin-cache: ${binFile.absolutePath}")
                     return
                 }
@@ -173,7 +273,6 @@ object CodesIndex {
                         BufferedReader(InputStreamReader(ins, Charsets.UTF_8)).readText()
                     }
                 }
-
                 else -> {
                     // Fallback naar assets (meegeleverde baseline)
                     runCatching {
@@ -193,6 +292,7 @@ object CodesIndex {
 
             // 3) Parse en bouw index
             parseIntoIndexes(text)
+            lastSource = if (jsonExists) "json" else "assets"
 
             // 4) Schrijf binaire cache (best effort)
             saveToBinary(
@@ -200,10 +300,8 @@ object CodesIndex {
                 sourceSize = if (jsonExists) jsonSize else -1L,
                 sourceMtime = if (jsonExists) jsonMtime else -1L
             )
-            Log.d(
-                TAG,
-                "Codes geladen uit ${if (jsonExists) "JSON" else "assets"} en gecached naar: ${binFile.absolutePath}"
-            )
+            lastBinPath = binFile.absolutePath
+            Log.d(TAG, "Codes geladen uit ${lastSource} en gecached naar: ${binFile.absolutePath}")
         } catch (t: Throwable) {
             Log.e(TAG, "Fout bij laden codes: ${t.message}", t)
             // maps kunnen leeg blijven; aanroeper kan dit controleren met isReady()
