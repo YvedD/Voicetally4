@@ -32,8 +32,6 @@ import com.google.android.material.textfield.TextInputLayout
 import com.yvesds.voicetally4.R
 import com.yvesds.voicetally4.databinding.FragmentMetadataSchermBinding
 import com.yvesds.voicetally4.ui.data.MetadataForm
-import com.yvesds.voicetally4.utils.codes.CodesIndex
-import com.yvesds.voicetally4.utils.codes.CodesRepository
 import com.yvesds.voicetally4.utils.io.StorageUtils
 import com.yvesds.voicetally4.utils.net.CredentialsStore
 import com.yvesds.voicetally4.utils.net.TrektellenApi
@@ -58,7 +56,6 @@ import java.util.UUID
  * - Response wordt opgeslagen naar /Documents/VoiceTally4/serverdata/counts_save_last.json
  * - Basic Auth met CredentialsStore (dialoog als credentials ontbreken).
  * - Geen locatie-type spinner meer.
- * - Nieuw: als codes.json ontbreekt, toon dialoog om online te downloaden (Basic Auth of fallback-nood-URL).
  */
 class MetadataScherm : Fragment() {
 
@@ -76,7 +73,7 @@ class MetadataScherm : Fragment() {
     private val prefsName = "metadata_prefs"
     private val keyLastTelpostCode = "last_telpost_code"
 
-    // Upload prefs: bewaar laatst ontvangen IDs
+    // Upload prefs: bewaar laatst ontvangen IDs (session-breed bruikbaar)
     private val uploadPrefs = "upload_prefs"
     private val keyOnlineId = "last_onlineid"
     private val keyTellingId = "last_tellingid"
@@ -122,15 +119,6 @@ class MetadataScherm : Fragment() {
         hookWeatherButton()
         setupTypeTellingSpinner()
         setupBottomBar()
-
-        // ---- NIEUW: on-demand codes laden of downloaden indien nodig ----
-        lifecycleScope.launch {
-            // Probeer lokaal (Documents of assets) te laden zonder UI-blokkering
-            CodesIndex.ensureLoadedAsync(requireContext())
-            if (!CodesIndex.isReady()) {
-                promptDownloadCodes()
-            }
-        }
     }
 
     private fun applySystemBarInsets() {
@@ -282,29 +270,28 @@ class MetadataScherm : Fragment() {
         val ctx = context ?: return
         val loc = getBestLastKnownLocation(ctx) ?: return
 
-        lifecycleScope.launch(Dispatchers.IO) {
+        // WeatherManager zelf schakelt naar IO; hier kan main-scope volstaan
+        viewLifecycleOwner.lifecycleScope.launch {
             val w = weatherManager.fetchCurrentWeather(loc.latitude, loc.longitude)
-            withContext(Dispatchers.Main) {
-                val b = _binding ?: return@withContext
-                if (!isAdded) return@withContext
+            if (!isAdded || _binding == null) return@launch
 
-                if (w != null) {
-                    b.acWindrichting.setText(weatherManager.toCompass(w.winddirection), false)
-                    if (!w.temperature.isNaN()) {
-                        b.etTemperatuur.setText(String.format(Locale.getDefault(), "%.1f", w.temperature))
-                    }
-                    val octas = weatherManager.toOctas(w.cloudcover)
-                    b.acBewolking.setText("$octas/8", false)
-                    b.acNeerslag.setText(weatherManager.mapWeatherCodeToNeerslagOption(w.weathercode), false)
+            if (w != null) {
+                binding.acWindrichting.setText(weatherManager.toCompass(w.winddirection), false)
+                if (!w.temperature.isNaN()) {
+                    binding.etTemperatuur.setText(String.format(Locale.getDefault(), "%.1f", w.temperature))
+                }
+                val octas = weatherManager.toOctas(w.cloudcover)
+                binding.acBewolking.setText("$octas/8", false)
+                binding.acNeerslag.setText(weatherManager.mapWeatherCodeToNeerslagOption(w.weathercode), false)
 
-                    if (w.visibility != 0) {
-                        b.etZicht.setText(w.visibility.toString())
-                    }
-                    val bft = weatherManager.toBeaufort(w.windspeed)
-                    b.acWindkracht.setText(toWindkrachtOption(bft, w.windspeed), false)
-                    if (w.pressure > 0) {
-                        b.etLuchtdruk.setText(w.pressure.toString())
-                    }
+                // Zicht in meters (geen afronding naar km)
+                if (w.visibility != 0) {
+                    binding.etZicht.setText(w.visibility.toString())
+                }
+                val bft = weatherManager.toBeaufort(w.windspeed)
+                binding.acWindkracht.setText(toWindkrachtOption(bft, w.windspeed), false)
+                if (w.pressure > 0) {
+                    binding.etLuchtdruk.setText(w.pressure.toString())
                 }
             }
         }
@@ -358,36 +345,30 @@ class MetadataScherm : Fragment() {
 
         binding.btnVerder.setOnClickListener {
             ensureCredentialsThen {
-                val b = _binding ?: return@ensureCredentialsThen
                 val form = collectForm()
 
-                lifecycleScope.launch(Dispatchers.IO) {
+                // Netwerk en schijf off-main
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                     val payload = buildCountsPayloadFromForm(form)
                     val response = TrektellenApi.postCountsSaveBasicAuth(requireContext(), payload)
 
-                    val savedPath = try {
+                    // Response altijd naar publieke Documents/VoiceTally4/serverdata
+                    try {
                         StorageUtils.saveStringToPublicDocuments(
                             context = requireContext(),
                             subDir = "serverdata",
                             fileName = "counts_save_last.json",
                             content = response.body
                         )
-                        savedPathToHuman(
-                            StorageUtils.getPublicAppDir(requireContext(), "serverdata").absolutePath,
-                            "counts_save_last.json"
-                        )
                     } catch (_: Throwable) {
-                        null
+                        // best-effort; geen UI-melding
                     }
 
                     withContext(Dispatchers.Main) {
-                        val bind = _binding
-                        if (bind == null || !isAdded) return@withContext
-
                         if (!response.ok) {
                             showErrorDialog(
                                 "Upload mislukt",
-                                "Status ${response.httpCode}\n${response.body.take(4000)}\n\n${savedPath?.let { "Opgeslagen als: $it" } ?: ""}"
+                                "Status ${response.httpCode}\n${response.body.take(4000)}"
                             )
                         } else {
                             val body = response.body
@@ -395,19 +376,24 @@ class MetadataScherm : Fragment() {
                             if (nok) {
                                 showErrorDialog("Server NOK", body.take(4000))
                             } else {
+                                // ✅ Parse uitgebreid: vangt ook {json:[{"gelukt_array":[{"onlineid":...}]}]}
                                 val (onlineId, tellingId) = parseIdsFromCountsSaveResponse(body)
+
+                                // Bewaar voor verdere app-flow (tot "nieuwe sessie")
                                 requireContext().getSharedPreferences(uploadPrefs, Context.MODE_PRIVATE).edit {
                                     onlineId?.let { putString(keyOnlineId, it) }
                                     tellingId?.let { putString(keyTellingId, it) }
                                 }
-                                val msg = buildString {
-                                    append("Telling gestart.")
-                                    onlineId?.let { append(" Online ID: $it.") }
-                                    tellingId?.let { append(" Telling ID: $it.") }
-                                    savedPath?.let { append("\nResp: $it") }
+
+                                // Meld “Telling gestart – ID: <onlineid>”
+                                val msg = if (onlineId != null) {
+                                    "Telling gestart - ID: $onlineId"
+                                } else {
+                                    "Telling gestart"
                                 }
-                                Snackbar.make(bind.root, msg, Snackbar.LENGTH_LONG)
-                                    .setAnchorView(bind.bottomBar)
+
+                                Snackbar.make(binding.root, msg, Snackbar.LENGTH_LONG)
+                                    .setAnchorView(binding.bottomBar)
                                     .show()
 
                                 findNavController().navigate(R.id.action_metadataScherm_to_soortSelectieScherm)
@@ -428,6 +414,7 @@ class MetadataScherm : Fragment() {
             return
         }
 
+        // Inline login UI
         val container = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(24, 8, 24, 0)
@@ -475,60 +462,24 @@ class MetadataScherm : Fragment() {
             .show()
     }
 
-    // --------- Codes downloaden (on-demand) ---------
-
-    private fun promptDownloadCodes() {
-        val ctx = requireContext()
-        MaterialAlertDialogBuilder(ctx)
-            .setTitle("Codes niet gevonden")
-            .setMessage("Wil je de meest recente codes online downloaden?\n(Vereist internet)")
-            .setPositiveButton("Downloaden") { _, _ ->
-                lifecycleScope.launch(Dispatchers.IO) {
-                    val useAuth = CredentialsStore.isConfigured(ctx)
-                    val result = if (useAuth) {
-                        CodesRepository.fetchCodesBasicAuthAndSave(ctx)
-                    } else {
-                        CodesRepository.fetchCodesFallbackByQueryAndSave(ctx)
-                    }
-
-                    withContext(Dispatchers.Main) {
-                        val b = _binding ?: return@withContext
-                        if (result.ok) {
-                            // Na succes index verversen voor de rest van de app
-                            lifecycleScope.launch {
-                                CodesIndex.ensureLoadedAsync(ctx)
-                                Snackbar.make(b.root, "Codes gedownload en geladen.", Snackbar.LENGTH_LONG)
-                                    .setAnchorView(b.bottomBar)
-                                    .show()
-                            }
-                        } else {
-                            showErrorDialog(
-                                "Download mislukt",
-                                "Status ${result.httpCode}\n${result.body.take(4000)}"
-                            )
-                        }
-                    }
-                }
-            }
-            .setNegativeButton("Annuleren", null)
-            .show()
-    }
-
     // region Form verzamelen & payload bouwen
     private fun collectForm(): MetadataForm {
         val hhmm = binding.etTijd.text?.toString()?.takeIf { it.matches(Regex("\\d{2}:\\d{2}")) } ?: selectedTimeHHmm
         val localTime = LocalTime.parse(hhmm, timeFmt)
         val epochMillis = selectedDate.atTime(localTime).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
 
+        // Telpost
         val labels = resources.getStringArray(R.array.vt4_telpost_labels)
         val values = resources.getStringArray(R.array.vt4_telpost_values)
         val currentTelpostLabel = binding.acTelpost.text?.toString().orEmpty()
         val telpostIndex = labels.indexOf(currentTelpostLabel).takeIf { it >= 0 } ?: labels.lastIndex
         val currentTelpostCode = values[telpostIndex]
 
+        // Tellers
         val tellerNaam = binding.etTellers.text?.toString()?.trim().orEmpty()
         val tellerId = "3533" // voorlopig vast
 
+        // Weer
         val windrichting = binding.acWindrichting.text?.toString()?.trim().orEmpty()
         val temperatuurC = binding.etTemperatuur.text?.toString()?.replace(',', '.')?.toDoubleOrNull()
         val bewolking = binding.acBewolking.text?.toString()?.trim().orEmpty()
@@ -550,18 +501,20 @@ class MetadataScherm : Fragment() {
             temperatuurC = temperatuurC,
             bewolkingAchtsten = bewolking,
             neerslag = neerslag,
-            zichtKm = zichtMeters,
+            zichtKm = zichtMeters, // in meters, naam historisch
             windkrachtBft = windkrachtBft,
             luchtdrukHpa = luchtdrukHpa,
             opmerkingen = binding.etOpmerkingen.text?.toString()?.trim().orEmpty()
         )
     }
 
+    /** Snelle, lokale mapping + payload met alle metadata, nrec/nsoort=0, lege data[]. */
     private fun buildCountsPayloadFromForm(form: MetadataForm): String {
         val externid = "Android App 1.8.45"
         val uuid = "Trektellen_Android_1.8.45_${UUID.randomUUID()}"
         val uploadTs = uploadTsFmt.format(Instant.now().atZone(ZoneId.systemDefault()))
 
+        // Typetelling mapping
         val typetellingCode = when (form.typeTelling.lowercase(Locale.getDefault())) {
             "alle soorten" -> "all"
             "zeetrek" -> "sea"
@@ -570,8 +523,10 @@ class MetadataScherm : Fragment() {
             else -> "all"
         }
 
+        // Windrichting: UI-label N, NO, ... -> API-code lowercase
         val windrichtingCode = labelToWindCode(form.windrichting)
 
+        // Neerslag
         val neerslagCode = when (form.neerslag.lowercase(Locale.getDefault())) {
             "geen" -> "geen"
             "regen" -> "regen"
@@ -584,8 +539,10 @@ class MetadataScherm : Fragment() {
             else -> ""
         }
 
+        // Bewolking: "x/8" → "x"
         val bewolkingInt = form.bewolkingAchtsten.substringBefore('/').trim().toIntOrNull() ?: 0
 
+        // Windkracht: "var","<1bf","1bf".. "11bf", ">11bf" → integer string
         val windkrachtInt = when {
             form.windkrachtBft.equals("var", true) -> 0
             form.windkrachtBft.startsWith("<1", true) -> 0
@@ -594,10 +551,11 @@ class MetadataScherm : Fragment() {
             else -> 0
         }
 
-        val zichtMetersInt = (form.zichtKm ?: 0.0).toInt()
+        val zichtMetersInt = (form.zichtKm ?: 0.0).toInt() // meters
         val tempInt = (form.temperatuurC ?: 0.0).toInt()
         val hpaInt = (form.luchtdrukHpa ?: 0.0).toInt()
 
+        // Zowel begin als eind = gekozen datum + tijd (uit de spinner)
         val beginEpochSec = (form.datumEpochMillis / 1000L).toString()
         val eindEpochSec = beginEpochSec
 
@@ -632,6 +590,8 @@ class MetadataScherm : Fragment() {
             put("equipment", "")
             put("uuid", uuid)
             put("uploadtijdstip", uploadTs)
+
+            // Expliciet opstart zonder waarnemingen
             put("nrec", "0")
             put("nsoort", "0")
             put("data", JSONArray())
@@ -653,20 +613,53 @@ class MetadataScherm : Fragment() {
     // endregion
 
     // region Response parsing & UI helpers
+    /**
+     * Zoek onlineid/tellingid in verschillende JSON varianten, o.a.:
+     * {json:[{"message":"OK","gelukt_array":[{"id":"","onlineid":3151358}], "added":"","failed":""}]}
+     */
     private fun parseIdsFromCountsSaveResponse(body: String): Pair<String?, String?> {
         return try {
             val root = JSONObject(body)
-            val arr = root.optJSONArray("json")
-            if (arr != null && arr.length() > 0) {
-                val first = arr.getJSONObject(0)
-                val online = first.optString("onlineid", "").ifBlank { null }
-                val telling = first.optString("tellingid", "").ifBlank { null }
-                online to telling
-            } else {
-                val online = JSONObject(body).optString("onlineid", "").ifBlank { null }
-                online to null
+
+            // 1) Nieuwe (meest voorkomende) vorm: { "json": [ { "gelukt_array": [ { "onlineid": 3151358, "id": "" } ] } ] }
+            root.optJSONArray("json")?.let { arr ->
+                if (arr.length() > 0) {
+                    val first = arr.getJSONObject(0)
+
+                    // a) directe velden?
+                    val directOnline = first.optString("onlineid", "").ifBlank { null }
+                    val directTelling = first.optString("tellingid", "").ifBlank { null }
+                    if (directOnline != null || directTelling != null) {
+                        return directOnline to directTelling
+                    }
+
+                    // b) gelukt_array → pak eerste item met onlineid
+                    val okArr = first.optJSONArray("gelukt_array")
+                    if (okArr != null && okArr.length() > 0) {
+                        val item = okArr.getJSONObject(0)
+                        val online = item.optString("onlineid", "").ifBlank {
+                            // soms numeriek zonder quotes
+                            item.optLong("onlineid", -1L).takeIf { it > 0 }?.toString()
+                        }
+                        val telling = item.optString("tellingid", "").ifBlank { null }
+                        if (!online.isNullOrBlank()) return online to telling
+                    }
+                }
             }
+
+            // 2) Simpelere vorm op root-niveau
+            val onlineRoot = root.optString("onlineid", "").ifBlank {
+                root.optLong("onlineid", -1L).takeIf { it > 0 }?.toString()
+            }
+            val tellingRoot = root.optString("tellingid", "").ifBlank { null }
+            if (!onlineRoot.isNullOrBlank() || tellingRoot != null) {
+                return onlineRoot to tellingRoot
+            }
+
+            // 3) Geen match → nulls
+            null to null
         } catch (_: Throwable) {
+            // 4) Regex-fallback (komt zelden nog hier terecht)
             val online = Regex("\"onlineid\"\\s*:\\s*\"?(\\d+)\"?").find(body)?.groupValues?.getOrNull(1)
             val telling = Regex("\"tellingid\"\\s*:\\s*\"?(\\d+)\"?").find(body)?.groupValues?.getOrNull(1)
             online to telling
@@ -686,8 +679,6 @@ class MetadataScherm : Fragment() {
             .setPositiveButton(android.R.string.ok, null)
             .show()
     }
-
-    private fun savedPathToHuman(dirPath: String, fileName: String): String = "$dirPath/$fileName"
     // endregion
 
     override fun onDestroyView() {
