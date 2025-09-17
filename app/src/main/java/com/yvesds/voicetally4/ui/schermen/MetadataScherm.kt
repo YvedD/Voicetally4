@@ -401,7 +401,7 @@ class MetadataScherm : Fragment() {
                                     tellingId?.let { putString(keyTellingId, it) }
                                 }
                                 val msg = buildString {
-                                    append("Telling opgeslagen.")
+                                    append("Telling gestart.")
                                     onlineId?.let { append(" Online ID: $it.") }
                                     tellingId?.let { append(" Telling ID: $it.") }
                                     savedPath?.let { append("\nResp: $it") }
