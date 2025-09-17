@@ -31,10 +31,11 @@ object CodesRepository {
         language: String = "dutch",
         versie: String = "1845"
     ): Result = withContext(Dispatchers.IO) {
-        val resp = TrektellenApi.getCodesBasicAuth(context, language, versie)
+        // Gebruik de suspend-variant om runBlocking in de deprecated wrapper te vermijden
+        val resp = TrektellenApi.getCodesBasicAuthAsync(context, language, versie)
 
         if (resp.ok) {
-            // NB: StorageUtils.saveJsonToPublicDocuments zet altijd onder Documents/VoiceTally4/<subdir>
+            // NB: StorageUtils.saveJsonToPublicDocuments zet altijd onder Documents/VoiceTally4/
             StorageUtils.saveJsonToPublicDocuments(
                 context = context,
                 relativeSubdir = "serverdata",
@@ -42,7 +43,6 @@ object CodesRepository {
                 content = resp.body
             )
         }
-
         Result(resp.ok, resp.httpCode, resp.body)
     }
 }

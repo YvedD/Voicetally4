@@ -21,12 +21,12 @@ import kotlin.concurrent.Volatile
 
 /**
  * Snelle code/label mapping op basis van lokaal bestand:
- * - Primair: Documents/VoiceTally4/serverdata/codes.json (menselijk leesbaar; door app of user geplaatst)
- * - Fallback: assets/trektellen_codes.json (wordt meegebundeld in de app)
+ * - Primair: Documents/VoiceTally4/serverdata/codes.json (door app of user geplaatst)
+ * - Fallback: assets/trektellen_codes.json (meegebundelde baseline)
  *
  * Optimalisatie:
- * - Binaire cache in app cache-dir: cacheDir/codes_index.bin
- *   Bij volgende runs laden we die binair (veel sneller) als die nieuwer is dan codes.json.
+ * - Binaire cache in **Documents/VoiceTally4/binaries/codes.bin**
+ *   We slaan bron-bestandsgrootte + mtime op in de header; alleen heropbouwen als JSON wijzigt.
  *
  * Velden die we nu ondersteunen:
  * - typetelling_trek
@@ -44,8 +44,8 @@ object CodesIndex {
     private const val JSON_FILE_NAME = "codes.json"
     private const val ASSETS_JSON = "trektellen_codes.json"
 
-    private const val BIN_FILE_NAME = "codes_index.bin"
-    private const val BIN_VERSION = 1
+    private const val BIN_FILE_NAME = "codes.bin"
+    private const val BIN_VERSION = 2 // ↑ verhoogd door uitgebreidere header (size+mtime)
 
     private const val ARRAY_KEY = "json"
 
@@ -143,22 +143,37 @@ object CodesIndex {
         try {
             val docsDir: File = StorageUtils.getPublicAppDir(context, "serverdata")
             val jsonFile = File(docsDir, JSON_FILE_NAME)
-            val binFile = File(context.cacheDir, BIN_FILE_NAME)
 
-            val canUseBin = binFile.exists() &&
-                    (!jsonFile.exists() || binFile.lastModified() >= jsonFile.lastModified())
+            // Binaire cache in publieke binaries-map (zodat ook via USB vindbaar)
+            val binDir: File = StorageUtils.getPublicAppDir(context, "binaries")
+            val binFile = File(binDir, BIN_FILE_NAME)
 
-            if (canUseBin && loadFromBinary(binFile)) {
-                Log.d(TAG, "Codes geladen vanuit bin-cache: ${binFile.absolutePath}")
-                return
+            val jsonExists = jsonFile.exists()
+            val jsonSize = if (jsonExists) jsonFile.length() else -1L
+            val jsonMtime = if (jsonExists) jsonFile.lastModified() else -1L
+
+            // 1) Probeer bin-cache als die overeenstemt met bron (size+mtime), of als JSON ontbreekt
+            if (binFile.exists()) {
+                val loadedOk = loadFromBinary(
+                    binFile = binFile,
+                    expectedSourceSize = if (jsonExists) jsonSize else null,
+                    expectedSourceMtime = if (jsonExists) jsonMtime else null
+                )
+                if (loadedOk) {
+                    // Minimaal loggen: enkel nuttige hint bij ontwikkelen
+                    Log.d(TAG, "Codes geladen vanuit bin-cache: ${binFile.absolutePath}")
+                    return
+                }
             }
 
+            // 2) Lees JSON (primair) of assets (fallback)
             val text: String? = when {
-                jsonFile.exists() -> {
+                jsonExists -> {
                     jsonFile.inputStream().buffered().use { ins ->
                         BufferedReader(InputStreamReader(ins, Charsets.UTF_8)).readText()
                     }
                 }
+
                 else -> {
                     // Fallback naar assets (meegeleverde baseline)
                     runCatching {
@@ -176,12 +191,19 @@ object CodesIndex {
                 return
             }
 
+            // 3) Parse en bouw index
             parseIntoIndexes(text)
 
-            // Probeer binaire cache weg te schrijven (best effort)
-            saveToBinary(binFile)
-            Log.d(TAG, "Codes geladen (${if (jsonFile.exists()) "JSON" else "assets"}) en gecached naar bin: ${binFile.absolutePath}")
-
+            // 4) Schrijf binaire cache (best effort)
+            saveToBinary(
+                binFile = binFile,
+                sourceSize = if (jsonExists) jsonSize else -1L,
+                sourceMtime = if (jsonExists) jsonMtime else -1L
+            )
+            Log.d(
+                TAG,
+                "Codes geladen uit ${if (jsonExists) "JSON" else "assets"} en gecached naar: ${binFile.absolutePath}"
+            )
         } catch (t: Throwable) {
             Log.e(TAG, "Fout bij laden codes: ${t.message}", t)
             // maps kunnen leeg blijven; aanroeper kan dit controleren met isReady()
@@ -203,8 +225,10 @@ object CodesIndex {
 
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
+
+            // Alleen Nederlandstalige labels
             val taalid = o.optString("taalid")
-            if (taalid != "1") continue // enkel NL
+            if (taalid != "1") continue
 
             val veld = o.optString("veld").trim()
             if (veld !in SUPPORTED_FIELDS) continue
@@ -222,34 +246,39 @@ object CodesIndex {
         tmpByField.forEach { (veld, list) ->
             // sorteren op sortering en daarna label
             val sorted = list.sortedWith(compareBy<CodeItem> { it.sort }.thenBy { it.label.lowercase(locale) })
-
             val labels = ArrayList<String>(sorted.size)
             val l2c = HashMap<String, String>(sorted.size)
             val c2l = HashMap<String, String>(sorted.size)
-
             for (item in sorted) {
                 labels.add(item.label)
                 l2c[item.label.lowercase(locale)] = item.code
                 c2l[item.code] = item.label
             }
-
             labelsSortedPerField[veld] = labels
             labelToCodePerField[veld] = l2c
             codeToLabelPerField[veld] = c2l
         }
     }
 
-    /** Binaire schrijf: [version][fieldCount]{ field,[count]{label,code} } */
-    private fun saveToBinary(binFile: File) {
+    /**
+     * Binaire schrijf:
+     * Header: [version:int][sourceSize:long][sourceMtime:long][fieldCount:int]
+     * Body:   { veld:String, count:int, [label:String, code:String] * count } * fieldCount
+     */
+    private fun saveToBinary(binFile: File, sourceSize: Long, sourceMtime: Long) {
         runCatching {
+            binFile.parentFile?.mkdirs()
             DataOutputStream(binFile.outputStream().buffered()).use { out ->
                 out.writeInt(BIN_VERSION)
+                out.writeLong(sourceSize)
+                out.writeLong(sourceMtime)
+
                 out.writeInt(labelsSortedPerField.size)
+                val locale = Locale.getDefault()
                 for ((veld, labels) in labelsSortedPerField) {
                     out.writeUTF(veld)
                     val l2c = labelToCodePerField[veld] ?: emptyMap()
                     out.writeInt(labels.size)
-                    val locale = Locale.getDefault()
                     for (label in labels) {
                         out.writeUTF(label)
                         out.writeUTF(l2c[label.lowercase(locale)] ?: "")
@@ -257,15 +286,35 @@ object CodesIndex {
                 }
                 out.flush()
             }
-        }.onFailure { Log.w(TAG, "Kon binaire cache niet wegschrijven: ${it.message}") }
+        }.onFailure {
+            Log.w(TAG, "Kon binaire cache niet wegschrijven: ${it.message}")
+        }
     }
 
-    /** Binaire lees: inverse van saveToBinary */
-    private fun loadFromBinary(binFile: File): Boolean {
+    /**
+     * Binaire lees: inverse van saveToBinary.
+     * - Als [expectedSourceSize] en [expectedSourceMtime] niet null zijn, moeten ze exact matchen.
+     * - Als ze null zijn (assets-fallback), accepteren we de bin zonder check.
+     */
+    private fun loadFromBinary(
+        binFile: File,
+        expectedSourceSize: Long?,
+        expectedSourceMtime: Long?
+    ): Boolean {
         return try {
             DataInputStream(BufferedInputStream(binFile.inputStream())).use { ins ->
                 val ver = ins.readInt()
                 if (ver != BIN_VERSION) return false
+
+                val savedSize = ins.readLong()
+                val savedMtime = ins.readLong()
+
+                if (expectedSourceSize != null && expectedSourceMtime != null) {
+                    if (savedSize != expectedSourceSize || savedMtime != expectedSourceMtime) {
+                        return false
+                    }
+                }
+                // Wanneer JSON ontbreekt en we assets gebruik(t)en: accepteer binaire cache altijd.
 
                 labelToCodePerField.clear()
                 codeToLabelPerField.clear()
@@ -275,6 +324,7 @@ object CodesIndex {
                 repeat(fieldCount) {
                     val veld = ins.readUTF()
                     val count = ins.readInt()
+
                     val labels = ArrayList<String>(count)
                     val l2c = HashMap<String, String>(count)
                     val c2l = HashMap<String, String>(count)

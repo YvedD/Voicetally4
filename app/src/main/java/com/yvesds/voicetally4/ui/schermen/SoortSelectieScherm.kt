@@ -1,6 +1,5 @@
 package com.yvesds.voicetally4.ui.schermen
 
-import android.content.SharedPreferences
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -15,16 +14,15 @@ import com.google.android.flexbox.FlexDirection
 import com.google.android.flexbox.FlexWrap
 import com.google.android.flexbox.FlexboxLayoutManager
 import com.google.android.flexbox.JustifyContent
+import com.google.android.material.progressindicator.CircularProgressIndicator
 import com.google.android.material.snackbar.Snackbar
 import com.yvesds.voicetally4.R
 import com.yvesds.voicetally4.databinding.FragmentSoortSelectieSchermBinding
 import com.yvesds.voicetally4.ui.adapters.AliasTileAdapter
-import com.yvesds.voicetally4.ui.core.SetupManager
-import com.yvesds.voicetally4.ui.data.SoortAlias
 import com.yvesds.voicetally4.ui.domein.SoortSelectieViewModel
+import com.yvesds.voicetally4.ui.domein.SoortSelectieViewModel.UiState
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
-import javax.inject.Inject
 
 @AndroidEntryPoint
 class SoortSelectieScherm : Fragment() {
@@ -32,22 +30,10 @@ class SoortSelectieScherm : Fragment() {
     private var _binding: FragmentSoortSelectieSchermBinding? = null
     private val binding get() = _binding!!
 
-    @Inject lateinit var sharedPrefs: SharedPreferences
-
-    private lateinit var setupManager: SetupManager
-    private lateinit var adapter: AliasTileAdapter
-
-    private var items: List<SoortAlias> = emptyList()
-
-    /** Geselecteerde keys = tileName (kolom 2). */
-    private val selectedTiles = linkedSetOf<String>() // linked -> behoud volgorde
-
     private val viewModel: SoortSelectieViewModel by viewModels()
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setupManager = SetupManager(requireContext(), sharedPrefs)
-    }
+    private lateinit var adapter: AliasTileAdapter
+    private lateinit var progress: CircularProgressIndicator
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -74,54 +60,50 @@ class SoortSelectieScherm : Fragment() {
         binding.recycler.recycledViewPool.setMaxRecycledViews(0, 128)
 
         adapter = AliasTileAdapter(
-            isSelected = { tileName -> selectedTiles.contains(tileName) },
+            isSelected = { tileName -> viewModel.isSelected(tileName) },
             onToggle = { tileName ->
-                if (!selectedTiles.add(tileName)) selectedTiles.remove(tileName)
-                showSelectedSnackbar()
+                viewModel.toggleSelection(tileName)
+                // alleen visueel toggelen; items blijven gelijk
+                binding.recycler.post { adapter.notifyDataSetChanged() }
+                showSelectionSnackbar()
             }
         )
         binding.recycler.adapter = adapter
 
-        // Observeer state: Loading → Data/Error
+        // Progress overlay (programmatic, geen XML-wijziging)
+        progress = CircularProgressIndicator(requireContext()).apply {
+            isIndeterminate = true
+            visibility = View.GONE
+        }
+        binding.root.addView(
+            progress,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+        // Center progress telkens als de layout verandert (ook bij rotatie)
+        val centerProgress: () -> Unit = {
+            progress.x = (binding.root.width - progress.width) / 2f
+            progress.y = (binding.root.height - progress.height) / 2f
+        }
+        binding.root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> centerProgress() }
+        progress.post { centerProgress() }
+
+        // Observe state
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.state.collect { state ->
-                    when (state) {
-                        is SoortSelectieViewModel.UiState.Idle -> {
-                            showLoadingUi(isLoading = true, message = getString(R.string.loading_species))
-                        }
-                        is SoortSelectieViewModel.UiState.Loading -> {
-                            showLoadingUi(isLoading = true, message = getString(R.string.loading_species))
-                        }
-                        is SoortSelectieViewModel.UiState.Data -> {
-                            items = state.items
-                            adapter.submitList(items)
-                            showLoadingUi(isLoading = false)
-                            binding.emptyView.isVisible = items.isEmpty()
-                        }
-                        is SoortSelectieViewModel.UiState.Error -> {
-                            showLoadingUi(isLoading = false)
-                            binding.emptyView.isVisible = true
-                            // Toon foutmelding op emptyView indien TextView, anders via snackbar
-                            val v = binding.emptyView
-                            val text = state.message.ifBlank { getString(R.string.loading_failed_generic) }
-                            when (v) {
-                                is android.widget.TextView -> v.text = text
-                                else -> Snackbar.make(binding.root, text, Snackbar.LENGTH_LONG).show()
-                            }
-                        }
-                    }
-                }
+                launch { viewModel.uiState.collect { renderState(it) } }
             }
         }
 
-        // Start lazy load
-        viewModel.loadAliases(requireContext(), setupManager)
+        // Start laden (eenmalig)
+        viewModel.loadAliases()
 
-        // OK: toon canonical namen van de selectie (kolom 1)
         binding.btnOk.setOnClickListener {
-            val chosenCanonical = items.asSequence()
-                .filter { selectedTiles.contains(it.tileName) }
+            val current = (viewModel.uiState.value as? UiState.Success)?.items.orEmpty()
+            val chosenCanonical = current.asSequence()
+                .filter { viewModel.isSelected(it.tileName) }
                 .map { it.canonical }
                 .toList()
 
@@ -132,29 +114,44 @@ class SoortSelectieScherm : Fragment() {
             }
             Snackbar.make(binding.root, msg, Snackbar.LENGTH_SHORT).show()
 
-            // TODO: navigeer naar tally-scherm met chosenCanonical + evt. soortId/tileName
+            // TODO: navigeer naar volgende scherm (tellen) met selectie
         }
     }
 
-    private fun showLoadingUi(isLoading: Boolean, message: String? = null) {
-        binding.recycler.isVisible = !isLoading
-        binding.emptyView.isVisible = isLoading
-        message?.let { msg ->
-            val v = binding.emptyView
-            if (v is android.widget.TextView) v.text = msg
+    private fun renderState(state: UiState) {
+        when (state) {
+            is UiState.Loading -> {
+                binding.emptyView.isVisible = false
+                progress.visibility = View.VISIBLE
+                progress.contentDescription = state.message
+            }
+            is UiState.Success -> {
+                progress.visibility = View.GONE
+                adapter.submitList(state.items)
+                binding.emptyView.isVisible = state.items.isEmpty()
+            }
+            is UiState.Error -> {
+                progress.visibility = View.GONE
+                adapter.submitList(emptyList())
+                binding.emptyView.isVisible = true
+                Snackbar.make(binding.root, state.message, Snackbar.LENGTH_LONG).show()
+            }
         }
     }
 
-    private fun showSelectedSnackbar() {
-        if (items.isEmpty()) return
-        val canonicalList = items.asSequence()
-            .filter { selectedTiles.contains(it.tileName) }
+    private fun showSelectionSnackbar() {
+        val current = (viewModel.uiState.value as? UiState.Success)?.items.orEmpty()
+        if (current.isEmpty()) return
+
+        val canonical = current.asSequence()
+            .filter { viewModel.isSelected(it.tileName) }
             .map { it.canonical }
             .toList()
-        val msg = if (canonicalList.isEmpty()) {
+
+        val msg = if (canonical.isEmpty()) {
             getString(R.string.chosen_species_none)
         } else {
-            getString(R.string.chosen_species_prefix, canonicalList.joinToString(", "))
+            getString(R.string.chosen_species_prefix, canonical.joinToString(", "))
         }
         Snackbar.make(binding.root, msg, Snackbar.LENGTH_SHORT).show()
     }

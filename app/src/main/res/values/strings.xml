@@ -52,4 +52,7 @@
     <string name="meta_opmerkingen">opmerkingen</string>
     <string name="meta_kies_datum_title">Kies datum</string>
     <string name="meta_kies_tijd_title">Kies tijd</string>
+    <string name="telling_started_id">Telling gestart - ID: %1$s</string>
+    <string name="telling_started_generic">Telling gestart.</string>
+    <string name="response_saved_at">Antwoord opgeslagen als: %1$s</string>
 </resources>
