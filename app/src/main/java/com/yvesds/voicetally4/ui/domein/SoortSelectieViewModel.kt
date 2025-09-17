@@ -7,207 +7,211 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yvesds.voicetally4.ui.core.SetupManager
 import com.yvesds.voicetally4.ui.data.SoortAlias
-import com.yvesds.voicetally4.utils.io.StorageUtils
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
-import java.io.File
-import java.nio.charset.Charset
+import java.io.InputStreamReader
+import java.nio.charset.StandardCharsets
 import javax.inject.Inject
 
+/**
+ * Laadt de soort-aliases lazily en volledig off-main.
+ * - Probeert eerst een binaire cache: Documents/VoiceTally4/binaries/aliasmapping.bin
+ * - Als miss/ongeldig: parse CSV uit de SAF-tree: VoiceTally4/assets/aliasmapping.csv, en bouw de cache.
+ */
 @HiltViewModel
-class SoortSelectieViewModel @Inject constructor(
-    @param:ApplicationContext private val appContext: Context, // <-- target param only (fixes warning)
-    private val setupManager: SetupManager
-) : ViewModel() {
+class SoortSelectieViewModel @Inject constructor() : ViewModel() {
 
-    // ---------- UI state ----------
-
-    sealed class UiState {
-        data class Loading(val message: String) : UiState()
-        data class Success(val items: List<SoortAlias>) : UiState()
-        data class Error(val message: String) : UiState()
+    sealed interface UiState {
+        data object Idle : UiState
+        data object Loading : UiState
+        data class Data(val items: List<SoortAlias>) : UiState
+        data class Error(val message: String) : UiState
     }
 
-    private val _uiState = MutableStateFlow<UiState>(UiState.Loading("Soorten inlezen…"))
-    val uiState: StateFlow<UiState> = _uiState
+    private val _state = MutableStateFlow<UiState>(UiState.Idle)
+    val state: StateFlow<UiState> = _state.asStateFlow()
 
-    // Geselecteerde tiles (keys = tileName)
-    private val _selected = MutableStateFlow<LinkedHashSet<String>>(linkedSetOf())
-    val selected: StateFlow<LinkedHashSet<String>> = _selected
-
-    @Volatile
-    private var started = false
-
-    fun loadAliases() {
-        if (started) return
-        started = true
-
-        viewModelScope.launch {
-            _uiState.value = UiState.Loading("Soorten inlezen…")
-
-            val csvDoc = withContext(Dispatchers.IO) { findCsvDocument() }
-            if (csvDoc == null) {
-                _uiState.value = UiState.Error("aliasmapping.csv niet gevonden in Documents/VoiceTally4/assets/")
+    fun loadAliases(context: Context, setupManager: SetupManager) {
+        // Herstartbaar; idempotent genoeg omdat we state updaten
+        viewModelScope.launch(Dispatchers.IO) {
+            _state.value = UiState.Loading
+            val res = runCatching {
+                loadFromBinaryOrCsv(context, setupManager)
+            }.getOrElse { ex ->
+                _state.value = UiState.Error(ex.message ?: "Onbekende fout bij inlezen.")
                 return@launch
             }
 
-            val csvSize = csvDoc.length()
-            val csvMtime = csvDoc.lastModified()
-
-            val binDir: File = StorageUtils.getPublicAppDir(appContext, "binaries")
-            val binFile = File(binDir, "aliases.bin")
-
-            // 1) Probeer binaire cache
-            val cached = withContext(Dispatchers.IO) {
-                readBinaryIfFresh(binFile, csvSize, csvMtime)
+            if (res == null) {
+                _state.value = UiState.Error("aliasmapping.csv niet gevonden of geen permissie.")
+            } else {
+                _state.value = UiState.Data(res)
             }
-            if (cached != null) {
-                _uiState.value = UiState.Success(cached)
-                return@launch
-            }
-
-            // 2) Parse CSV
-            val parsed = withContext(Dispatchers.IO) { parseCsv(csvDoc) }
-            if (parsed.isEmpty()) {
-                _uiState.value = UiState.Error("aliasmapping.csv is leeg of ongeldig.")
-                return@launch
-            }
-
-            // 3) Cache opbouwen
-            _uiState.value = UiState.Loading("Cache opbouwen…")
-            withContext(Dispatchers.IO) {
-                writeBinary(binFile, csvSize, csvMtime, parsed)
-            }
-
-            _uiState.value = UiState.Success(parsed)
         }
     }
 
-    fun toggleSelection(tileName: String) {
-        val set = LinkedHashSet(_selected.value)
-        if (!set.add(tileName)) set.remove(tileName)
-        _selected.value = set
+    // -- BIN bestandskenmerken --
+    private val MAGIC = 0x41_4C_49_41 // 'ALIA' (Alias)
+    private val VERSION = 1
+
+    private fun loadFromBinaryOrCsv(
+        context: Context,
+        setupManager: SetupManager
+    ): List<SoortAlias>? {
+        val treeUri: Uri = setupManager.getPersistedTreeUri() ?: return null
+        if (!setupManager.hasPersistedPermission(treeUri)) return null
+
+        val tree = DocumentFile.fromTreeUri(context, treeUri) ?: return null
+        val appRoot = tree.findFile("VoiceTally4")?.takeIf { it.isDirectory } ?: return null
+
+        // 1) Zoek CSV
+        val assetsDir = appRoot.findFile("assets")?.takeIf { it.isDirectory } ?: return null
+        val csvFile = assetsDir.listFiles().firstOrNull {
+            it.name?.equals("aliasmapping.csv", ignoreCase = true) == true
+        } ?: return null
+
+        val csvLen = csvFile.length()
+        val csvMod = csvFile.lastModified()
+
+        // 2) Zoek binaries/aliasmapping.bin
+        val bins = appRoot.findFile("binaries")?.takeIf { it.isDirectory }
+            ?: appRoot.createDirectory("binaries")
+            ?: return loadCsv(context, csvFile).also { /* geen cache mogelijk */ }
+
+        var bin = bins.findFile("aliasmapping.bin")
+        // 3) Probeer lezen
+        if (bin != null && bin.isFile) {
+            try {
+                context.contentResolver.openInputStream(bin.uri)?.use { base ->
+                    DataInputStream(BufferedInputStream(base)).use { din ->
+                        val magic = din.readInt()
+                        val version = din.readInt()
+                        val len = din.readLong()
+                        val mod = din.readLong()
+                        if (magic == MAGIC && version == VERSION && len == csvLen && mod == csvMod) {
+                            val count = din.readInt().coerceAtLeast(0)
+                            val out = ArrayList<SoortAlias>(count.coerceAtLeast(256))
+                            repeat(count) {
+                                val soortId = readUtf8(din)
+                                val canonical = readUtf8(din)
+                                val tileName = readUtf8(din)
+                                val aliasCount = din.readInt().coerceAtLeast(0)
+                                val aliases = ArrayList<String>(aliasCount)
+                                repeat(aliasCount) { aliases.add(readUtf8(din)) }
+                                out.add(SoortAlias(soortId, canonical, tileName, aliases))
+                            }
+                            return out
+                        }
+                    }
+                }
+            } catch (_: Throwable) {
+                // valt terug op CSV
+            }
+        }
+
+        // 4) CSV parse + cache schrijven
+        val parsed = loadCsv(context, csvFile)
+        // bouw/overschrijf bin
+        if (parsed.isNotEmpty()) {
+            try {
+                if (bin == null || !bin.isFile) {
+                    bin = bins.createFile("application/octet-stream", "aliasmapping.bin")
+                }
+                bin?.uri?.let { uri ->
+                    context.contentResolver.openOutputStream(uri, "rwt")?.use { base ->
+                        DataOutputStream(BufferedOutputStream(base)).use { dout ->
+                            dout.writeInt(MAGIC)
+                            dout.writeInt(VERSION)
+                            dout.writeLong(csvLen)
+                            dout.writeLong(csvMod)
+                            dout.writeInt(parsed.size)
+                            parsed.forEach { rec ->
+                                writeUtf8(dout, rec.soortId)
+                                writeUtf8(dout, rec.canonical)
+                                writeUtf8(dout, rec.tileName)
+                                dout.writeInt(rec.aliases.size)
+                                rec.aliases.forEach { writeUtf8(dout, it) }
+                            }
+                            dout.flush()
+                        }
+                    }
+                }
+            } catch (_: Throwable) {
+                // best-effort; cache mag falen zonder UI-impact
+            }
+        }
+        return parsed
     }
 
-    fun isSelected(tileName: String): Boolean = _selected.value.contains(tileName)
-
-    // ---------- CSV & BIN intern ----------
-
-    private fun findCsvDocument(): DocumentFile? {
-        val tree: Uri = setupManager.getPersistedTreeUri() ?: return null
-        if (!setupManager.hasPersistedPermission(tree)) return null
-
-        val root = DocumentFile.fromTreeUri(appContext, tree) ?: return null
-        val appRoot = root.findFile("VoiceTally4")?.takeIf { it.isDirectory } ?: return null
-        val assets = appRoot.findFile("assets")?.takeIf { it.isDirectory } ?: return null
-        return assets.listFiles().firstOrNull { it.name?.equals("aliasmapping.csv", ignoreCase = true) == true }
-    }
-
-    private fun parseCsv(csvDoc: DocumentFile): List<SoortAlias> {
-        val resolver = appContext.contentResolver
-        val result = ArrayList<SoortAlias>(1024)
-        resolver.openInputStream(csvDoc.uri).use { input ->
-            if (input == null) return emptyList()
-            input.bufferedReader(Charset.forName("UTF-8")).useLines { seq ->
+    private fun loadCsv(context: Context, csv: DocumentFile): List<SoortAlias> {
+        val resolver = context.contentResolver
+        resolver.openInputStream(csv.uri)?.use { inStream ->
+            InputStreamReader(inStream, StandardCharsets.UTF_8).buffered().use { reader ->
+                val out = ArrayList<SoortAlias>(1024)
                 var firstNonEmptySeen = false
-                seq.forEach { raw ->
+                reader.forEachLine { raw ->
                     val line = raw.trim()
-                    if (line.isEmpty()) return@forEach
+                    if (line.isEmpty()) return@forEachLine
+
+                    // Sla 1e niet-lege headerachtige lijn over
                     if (!firstNonEmptySeen) {
                         firstNonEmptySeen = true
                         val lower = line.lowercase()
-                        // 1e niet-lege regel is header? Dan overslaan.
-                        if (lower.startsWith("soortid;") || "tilename" in lower || "canonical" in lower || lower.startsWith("#")) {
-                            return@forEach
+                        if (
+                            lower.startsWith("soortid;") ||
+                            "tilename" in lower ||
+                            "canonical" in lower ||
+                            lower.startsWith("#")
+                        ) {
+                            return@forEachLine
                         }
                     }
+
                     val cols = line.split(';')
                     if (cols.size >= 3) {
                         val soortId = cols[0].trim()
                         val canonical = cols[1].trim()
                         val tileName = cols[2].trim()
-                        if (soortId.isEmpty() || canonical.isEmpty() || tileName.isEmpty()) return@forEach
-                        val aliases =
-                            if (cols.size > 3)
-                                cols.subList(3, minOf(cols.size, 24)).map { it.trim() }.filter { it.isNotEmpty() }
-                            else
-                                emptyList()
-                        result.add(SoortAlias(soortId, canonical, tileName, aliases))
+                        if (soortId.isEmpty() || canonical.isEmpty() || tileName.isEmpty()) return@forEachLine
+                        val aliases = if (cols.size > 3) {
+                            cols.subList(3, minOf(cols.size, 24))
+                                .map { it.trim() }
+                                .filter { it.isNotEmpty() }
+                        } else emptyList()
+                        out.add(SoortAlias(soortId, canonical, tileName, aliases))
                     }
                 }
+                return out
             }
         }
-        return result
+        return emptyList()
     }
 
-    private fun readBinaryIfFresh(
-        binFile: File,
-        csvSize: Long,
-        csvMtime: Long
-    ): List<SoortAlias>? {
-        if (!binFile.exists()) return null
-        return try {
-            DataInputStream(binFile.inputStream().buffered()).use { ins ->
-                val version = ins.readInt()
-                if (version != BIN_VERSION) return null
-                val savedSize = ins.readLong()
-                val savedMtime = ins.readLong()
-                if (savedSize != csvSize || savedMtime != csvMtime) return null
+    // --- Compacte UTF-8 helpers (length:int + bytes) ---
+    private fun writeUtf8(dout: DataOutputStream, s: String) {
+        val bytes = s.toByteArray(StandardCharsets.UTF_8)
+        dout.writeInt(bytes.size)
+        dout.write(bytes)
+    }
 
-                val count = ins.readInt()
-                val out = ArrayList<SoortAlias>(count.coerceAtLeast(0))
-                repeat(count) {
-                    val soortId = ins.readUTF()
-                    val canonical = ins.readUTF()
-                    val tileName = ins.readUTF()
-                    val aliasCount = ins.readInt()
-                    val aliases = ArrayList<String>(aliasCount.coerceAtLeast(0))
-                    repeat(aliasCount) {
-                        aliases.add(ins.readUTF())
-                    }
-                    out.add(SoortAlias(soortId, canonical, tileName, aliases))
-                }
-                out
-            }
-        } catch (_: Throwable) {
-            null
+    private fun readUtf8(din: DataInputStream): String {
+        val len = din.readInt()
+        if (len <= 0) return ""
+        val buf = ByteArray(len)
+        var read = 0
+        while (read < len) {
+            val r = din.read(buf, read, len - read)
+            if (r <= 0) break
+            read += r
         }
-    }
-
-    private fun writeBinary(
-        binFile: File,
-        csvSize: Long,
-        csvMtime: Long,
-        items: List<SoortAlias>
-    ) {
-        // Zorg dat de map bestaat
-        binFile.parentFile?.mkdirs()
-        runCatching {
-            DataOutputStream(binFile.outputStream().buffered()).use { out ->
-                out.writeInt(BIN_VERSION)
-                out.writeLong(csvSize)
-                out.writeLong(csvMtime)
-                out.writeInt(items.size)
-                for (it in items) {
-                    out.writeUTF(it.soortId)
-                    out.writeUTF(it.canonical)
-                    out.writeUTF(it.tileName)
-                    out.writeInt(it.aliases.size)
-                    for (a in it.aliases) out.writeUTF(a)
-                }
-                out.flush()
-            }
-        }
-    }
-
-    companion object {
-        private const val BIN_VERSION = 1
+        return String(buf, 0, read, StandardCharsets.UTF_8)
     }
 }

@@ -32,6 +32,8 @@
     <!-- Soortselectie -->
     <string name="soortselectie_title">soortselectie</string>
     <string name="ok">OK</string>
+    <string name="loading_failed_generic">Geen soorten gevonden!</string>
+    <string name="loading_species">Soorten inladen</string>
     <string name="empty_alias_hint">Geen aliassen gevonden. Plaats aliasmapping.csv in /Documents/VoiceTally4/assets.</string>
     <string name="chosen_species_prefix">gekozen soorten : %1$s</string>
     <string name="chosen_species_none">gekozen soorten : (geen)</string>
