@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="?attr/colorSurface"
+    android:padding="12dp">
+
+    <!-- Spraaklog (bovenaan) -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recyclerLog"
+        android:layout_width="match_parent"
+        android:layout_height="160dp"
+        android:padding="4dp"
+        android:scrollbars="vertical" />
+
+    <!-- Luisterstatus -->
+    <TextView
+        android:id="@+id/tvListening"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/listening_status_listening"
+        android:paddingTop="6dp"
+        android:visibility="gone" />
+
+    <!-- Handmatige invoer (optioneel; Enter = parse) -->
+    <EditText
+        android:id="@+id/inputManual"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="handmatige invoer (debug)"
+        android:imeOptions="actionDone"
+        android:inputType="text"
+        android:paddingTop="6dp" />
+
+    <!-- Tellers (onderaan, vult rest) -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recyclerTally"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:paddingTop="8dp"
+        android:clipToPadding="false"
+        android:scrollbars="vertical" />
+
+</LinearLayout>

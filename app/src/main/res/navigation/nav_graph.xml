@@ -40,4 +40,15 @@
         android:name="com.yvesds.voicetally4.ui.schermen.SoortSelectieScherm"
         android:label="Soortselectie"
         tools:layout="@layout/fragment_soort_selectie_scherm" />
+
+    <fragment
+        android:id="@+id/tallyScherm"
+        android:name="com.yvesds.voicetally4.ui.schermen.TallyScherm"
+        android:label="Telling"
+        tools:layout="@layout/fragment_tally_scherm">
+        <action
+            android:id="@+id/action_soortSelectieScherm_to_tallyScherm"
+            app:destination="@id/tallyScherm" />
+    </fragment>
+
 </navigation>

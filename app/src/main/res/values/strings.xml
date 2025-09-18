@@ -55,4 +55,11 @@
     <string name="telling_started_id">Telling gestart - ID: %1$s</string>
     <string name="telling_started_generic">Telling gestart.</string>
     <string name="response_saved_at">Antwoord opgeslagen als: %1$s</string>
+    <!-- Tallyscherm -->
+    <string name="listening_status_listening">Luisteren…</string>
+    <string name="dialog_add">Toevoegen</string>
+    <string name="dialog_ignore">Negeer</string>
+    <string name="tally_added_new_species">Toegevoegd: %1$d nieuwe soort(en)</string>
+
+
 </resources>
