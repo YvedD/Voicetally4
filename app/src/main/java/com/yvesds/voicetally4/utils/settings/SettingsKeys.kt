@@ -5,6 +5,8 @@ package com.yvesds.voicetally4.utils.settings
  * - Geen backward-compat nodig: we bouwen VT4 "from scratch".
  */
 object SettingsKeys {
+    // <-- nodig voor StartActiviteit
+    const val KEY_SETUP_DONE = "setup_done"
     // Algemene prefs (bestaand gebruik in project)
     const val PREFS_NAME: String = "voicetally_prefs"
 

@@ -31,17 +31,15 @@
         android:enableOnBackInvokedCallback="true">
 
 
-        <!-- LAUNCHER activity (Android 12+: exported verplicht) -->
         <activity
             android:name=".StartActiviteit"
             android:exported="true"
             android:theme="@style/Theme.VoiceTally4">
             <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-
         <!-- NavHostFragment zit in de layout; geen manifest entry nodig -->
 
     </application>

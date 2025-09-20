@@ -1,6 +1,7 @@
 package com.yvesds.voicetally4
 
 import android.app.Application
+import androidx.appcompat.app.AppCompatDelegate
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -13,21 +14,23 @@ import javax.inject.Qualifier
 import javax.inject.Singleton
 
 @HiltAndroidApp
-class VoiceTallyApp : Application()
+class VoiceTallyApp : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        // Forceer één thema (donker) zodat er geen DayNight-recreate/flits kan optreden
+        AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
+    }
+}
 
 /**
  * Qualifier voor de application-brede CoroutineScope.
- * Zo vermijden we verwarring met andere scopes (ViewModel, lifecycle, etc.).
  */
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
 annotation class ApplicationScope
 
 /**
- * Kleine, lokale Hilt-module om een @ApplicationScope CoroutineScope te voorzien.
- * We plaatsen dit hier (zelfde bestand) zodat je AppModule niet direct moet wijzigen.
- * Gebruik:
- *   @Inject @ApplicationScope lateinit var appScope: CoroutineScope
+ * Hilt-module die een @ApplicationScope CoroutineScope voorziet.
  */
 @Module
 @InstallIn(SingletonComponent::class)

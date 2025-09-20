@@ -174,21 +174,29 @@ class EersteSetupScherm : Fragment() {
      * Dit voorkomt de crash “action … cannot be found from current destination …”
      * wanneer de Activity de startDestination al op `opstartScherm` heeft gezet.
      */
+// In com.yvesds.voicetally4.ui.schermen.EersteSetupScherm
+
     private fun navigateToStart() {
-        setBusy(false)
+        if (!isAdded) return
         val nav = findNavController()
-        val current = nav.currentDestination?.id
-        if (current == R.id.opstartScherm) return // we staan er al; niets doen.
 
-        val opts = NavOptions.Builder()
-            .setPopUpTo(R.id.eersteSetupScherm, true)
-            .build()
+        // Forceer naar opstartScherm, ook als currentDestination al opstartScherm is.
+        val options = androidx.navigation.navOptions {
+            // Verwijder setup uit de backstack
+            popUpTo(R.id.eersteSetupScherm) { inclusive = true }
+            // Geen anim-flits
+            anim {
+                enter = 0; exit = 0; popEnter = 0; popExit = 0
+            }
+            launchSingleTop = true
+        }
 
-        try {
-            nav.navigate(R.id.opstartScherm, null, opts)
-        } catch (_: IllegalArgumentException) {
-            // Als het destination-id (tijdelijk) niet in de graph zit, niets forceren.
-            // Dit voorkomt crash bij snelle lifecycle-wissels.
+        // Als je daadwerkelijk op EersteSetup staat, mag je de action gebruiken;
+        // anders rechtstreeks naar destination id (voorkomt "action not found from current dest").
+        if (nav.currentDestination?.id == R.id.eersteSetupScherm) {
+            nav.navigate(R.id.action_eersteSetupScherm_to_opstartScherm, null, options)
+        } else {
+            nav.navigate(R.id.opstartScherm, null, options)
         }
     }
 

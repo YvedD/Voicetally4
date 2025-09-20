@@ -42,4 +42,13 @@
         <item name="shapeAppearanceMediumComponent">@style/ShapeAppearance.VoiceTally4.Rounded6</item>
         <item name="shapeAppearanceLargeComponent">@style/ShapeAppearance.VoiceTally4.Rounded6</item>
     </style>
+    <style name="Theme.VoiceTally4.Splash" parent="Theme.SplashScreen">
+        <!-- Zwarte achtergrond, mooi passend bij jouw app -->
+        <item name="windowSplashScreenBackground">@color/vt4_black</item>
+        <!-- Toon je launcher-icon tijdens de splash -->
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <!-- Na de splash schakelen we automatisch naar je gewone thema -->
+        <item name="postSplashScreenTheme">@style/Theme.VoiceTally4</item>
+    </style>
+
 </resources>

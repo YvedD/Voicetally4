@@ -19,7 +19,7 @@ import androidx.fragment.app.viewModels
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.snackbar.Snackbar
-import com.yvesds.voicetally4.HardwareKeyHandler
+import com.yvesds.voicetally4.utils.hardware.HardwareKeyHandler
 import com.yvesds.voicetally4.R
 import com.yvesds.voicetally4.databinding.FragmentTallySchermBinding
 import com.yvesds.voicetally4.ui.adapters.TallyAdapter
@@ -35,7 +35,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.util.Locale
 
-class TallyScherm : Fragment(), HardwareKeyHandler, NieuweSoortenDialoogScherm.Listener {
+class TallyScherm : Fragment(), HardwareKeyHandler.Callback, NieuweSoortenDialoogScherm.Listener {
 
     private var _binding: FragmentTallySchermBinding? = null
     private val binding get() = _binding!!
