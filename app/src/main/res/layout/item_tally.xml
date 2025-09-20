@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Compacte teller-tegel voor 1 soort.
+     IDs en hiërarchie matchen exact met TallyAdapter:
+     - textSpeciesName
+     - textCount
+     - buttonIncrement
+     - buttonDecrement
+     - buttonReset
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/tallyRootItem"
     android:layout_width="match_parent"
@@ -6,60 +14,66 @@
     android:orientation="vertical"
     android:padding="6dp">
 
+    <!-- Naam van de soort -->
+    <TextView
+        android:id="@+id/textSpeciesName"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Soortnaam"
+        android:textStyle="bold"
+        android:textSize="16sp"
+        android:paddingBottom="6dp" />
+
+    <!-- Actie-rij: -  [count]  +   reset -->
     <LinearLayout
         android:id="@+id/tallyContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="8dp">
+        android:gravity="center_vertical|center_horizontal"
+        android:orientation="horizontal">
 
-        <!-- Soortnaam -->
+        <!-- [-] -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/buttonDecrement"
+            style="@style/Widget.VoiceTally4.Button.Outlined"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginEnd="8dp"
+            android:minWidth="0dp"
+            android:text="−"
+            android:contentDescription="Verlaag" />
+
+        <!-- Aantal -->
         <TextView
-            android:id="@+id/textSpeciesName"
+            android:id="@+id/textCount"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Soortnaam"
+            android:text="0"
+            android:textSize="20sp"
             android:textStyle="bold"
-            android:textSize="16sp"
-            android:paddingBottom="6dp" />
+            android:paddingHorizontal="8dp" />
 
-        <!-- -  [count]  +  reset -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical|center_horizontal"
-            android:orientation="horizontal">
+        <!-- [+] -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/buttonIncrement"
+            style="@style/Widget.VoiceTally4.Button.Outlined"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="12dp"
+            android:minWidth="0dp"
+            android:text="+"
+            android:contentDescription="Verhoog" />
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/buttonDecrement"
-                style="@style/Widget.Material3.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="40dp"
-                android:text="−" />
-
-            <TextView
-                android:id="@+id/textCount"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginHorizontal="12dp"
-                android:text="0"
-                android:textStyle="bold"
-                android:textSize="18sp" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/buttonIncrement"
-                style="@style/Widget.Material3.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="40dp"
-                android:text="+" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/buttonReset"
-                style="@style/Widget.Material3.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="40dp"
-                android:layout_marginStart="12dp"
-                android:text="reset" />
-        </LinearLayout>
+        <!-- [reset] -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/buttonReset"
+            style="@style/Widget.VoiceTally4.Button.Outlined"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:minWidth="0dp"
+            android:text="reset"
+            android:contentDescription="Reset naar nul" />
     </LinearLayout>
+
 </LinearLayout>

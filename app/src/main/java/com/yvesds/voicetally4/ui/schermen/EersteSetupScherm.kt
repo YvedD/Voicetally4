@@ -14,6 +14,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
+import androidx.navigation.NavOptions
 import androidx.navigation.fragment.findNavController
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.yvesds.voicetally4.R
@@ -78,7 +79,7 @@ class EersteSetupScherm : Fragment() {
         // Maak/controleer mapstructuur
         val r = setup.ensureFolderStructure(uri)
         if (r.isSuccess) {
-            // <<< SNELLE Vlag zetten, zodat Activity meteen opstartscherm kiest >>>
+            // Zet vlag zodat Activity bij volgende keer meteen het opstartscherm kiest
             setup.markSetupDone()
             Toast.makeText(requireContext(), getString(R.string.setup_done), Toast.LENGTH_SHORT).show()
             navigateToStart()
@@ -109,7 +110,7 @@ class EersteSetupScherm : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Mocht je hier toch belanden terwijl alles al klaar is, navigeer direct weg.
+        // Als alles al klaar is en je belandt hier toch (bv. na Activity recreate), navigeer veilig weg.
         if (setup.isSetupComplete() || setup.isSetupDoneFlag()) {
             navigateToStart()
             return
@@ -131,12 +132,11 @@ class EersteSetupScherm : Fragment() {
     }
 
     private fun continueSetupAfterPermissions() {
-        // Al een persistente Documents-URI? Herschakel mappen-check
+        // Hebben we al een persistente Documents-URI? Dan enkel structuur checken.
         val existing = setup.getPersistedTreeUri()
         if (existing != null && setup.hasPersistedPermission(existing)) {
             val r = setup.ensureFolderStructure(existing)
             if (r.isSuccess) {
-                // <<< SNELLE Vlag zetten, zodat Activity meteen opstartscherm kiest >>>
                 setup.markSetupDone()
                 navigateToStart()
             } else {
@@ -169,9 +169,27 @@ class EersteSetupScherm : Fragment() {
                     android.content.pm.PackageManager.PERMISSION_GRANTED
         }
 
+    /**
+     * **Belangrijk**: Navigeer **zonder** action-ID, en pop de setup uit de stack.
+     * Dit voorkomt de crash “action … cannot be found from current destination …”
+     * wanneer de Activity de startDestination al op `opstartScherm` heeft gezet.
+     */
     private fun navigateToStart() {
         setBusy(false)
-        findNavController().navigate(R.id.action_eersteSetupScherm_to_opstartScherm)
+        val nav = findNavController()
+        val current = nav.currentDestination?.id
+        if (current == R.id.opstartScherm) return // we staan er al; niets doen.
+
+        val opts = NavOptions.Builder()
+            .setPopUpTo(R.id.eersteSetupScherm, true)
+            .build()
+
+        try {
+            nav.navigate(R.id.opstartScherm, null, opts)
+        } catch (_: IllegalArgumentException) {
+            // Als het destination-id (tijdelijk) niet in de graph zit, niets forceren.
+            // Dit voorkomt crash bij snelle lifecycle-wissels.
+        }
     }
 
     private fun setBusy(busy: Boolean) {
