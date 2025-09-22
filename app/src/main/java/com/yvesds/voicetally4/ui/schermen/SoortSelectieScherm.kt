@@ -10,6 +10,7 @@ import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.navigation.fragment.findNavController
 import com.google.android.flexbox.FlexDirection
 import com.google.android.flexbox.FlexWrap
 import com.google.android.flexbox.FlexboxLayoutManager
@@ -62,8 +63,7 @@ class SoortSelectieScherm : Fragment() {
         adapter = AliasTileAdapter(
             isSelected = { tileName -> viewModel.isSelected(tileName) },
             onToggle = { tileName ->
-                viewModel.toggleSelection(tileName)
-                // alleen visueel toggelen; items blijven gelijk
+                viewModel.toggleSelection(tileName) // alleen visueel toggelen; items blijven gelijk
                 binding.recycler.post { adapter.notifyDataSetChanged() }
                 showSelectionSnackbar()
             }
@@ -82,6 +82,7 @@ class SoortSelectieScherm : Fragment() {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         )
+
         // Center progress telkens als de layout verandert (ook bij rotatie)
         val centerProgress: () -> Unit = {
             progress.x = (binding.root.width - progress.width) / 2f
@@ -100,6 +101,7 @@ class SoortSelectieScherm : Fragment() {
         // Start laden (eenmalig)
         viewModel.loadAliases()
 
+        // Navigeren naar TallyScherm
         binding.btnOk.setOnClickListener {
             val current = (viewModel.uiState.value as? UiState.Success)?.items.orEmpty()
             val chosenCanonical = current.asSequence()
@@ -114,7 +116,8 @@ class SoortSelectieScherm : Fragment() {
             }
             Snackbar.make(binding.root, msg, Snackbar.LENGTH_SHORT).show()
 
-            // TODO: navigeer naar volgende scherm (tellen) met selectie
+            // Ga door naar het TallyScherm (action staat in nav_graph onder het bron-fragment)
+            findNavController().navigate(R.id.action_soortSelectieScherm_to_tallyScherm)
         }
     }
 
