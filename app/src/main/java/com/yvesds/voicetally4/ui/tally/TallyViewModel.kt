@@ -1,170 +1,168 @@
 package com.yvesds.voicetally4.ui.tally
 
-import android.app.Application
-import android.content.Context
-import android.content.SharedPreferences
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.yvesds.voicetally4.utils.io.StorageUtils
-import com.yvesds.voicetally4.utils.settings.SettingsKeys
-import kotlinx.coroutines.Dispatchers
+import com.yvesds.voicetally4.shared.SharedSpeciesViewModel
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import org.json.JSONArray
-import org.json.JSONObject
-import java.io.File
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Houdt actieve soorten, totalen en de spraaklog bij. Schrijft debounced autosaves.
- * Nav/Activity-scoped houden zodat log & state niet verdwijnen bij navigatie.
+ * Compatibele, veilige "brug"-ViewModel voor Tally.
+ *
+ * - Werkt standalone (eigen StateFlows) zónder verplicht shared VM.
+ * - Kan optioneel synchroniseren met SharedSpeciesViewModel via [attachShared].
+ * - Publieke API spiegelt de belangrijkste operaties (increment/decrement/reset/setCount/appendLog).
+ *
+ * Gebruik:
+ *   val vm: TallyViewModel by viewModels()
+ *   vm.attachShared(sharedVm) // optioneel; koppelt flows + delegatie
+ *
+ * Als attachShared() NIET wordt aangeroepen:
+ *   - werkt TallyViewModel op eigen lokale state (handig in tests of legacy code).
+ * Als attachShared() WEL wordt aangeroepen:
+ *   - leest hij doorlopend mee met de shared VM en delegeert mutaties daarnaar.
  */
-class TallyViewModel(app: Application) : AndroidViewModel(app) {
+@HiltViewModel
+class TallyViewModel @Inject constructor() : ViewModel() {
 
-    data class UiState(
-        val listening: Boolean = false,
-        val speechLog: List<String> = emptyList(),
-        val totals: Map<String, Int> = emptyMap(),       // soortId -> count
-        val activeSpecies: Set<String> = emptySet(),     // soortId in telling
-        val speciesNames: Map<String, String> = emptyMap() // soortId -> displayName
-    )
+    // --- Lokale (fallback) state ---
+    private val _selectedSpecies = MutableStateFlow<LinkedHashSet<String>>(linkedSetOf())
+    val selectedSpecies: StateFlow<Set<String>> = _selectedSpecies.asStateFlow()
 
-    private val state = MutableStateFlow(UiState())
-    val uiState: StateFlow<UiState> = state
+    private val _tallyMap = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val tallyMap: StateFlow<Map<String, Int>> = _tallyMap.asStateFlow()
 
-    private val totalsMutable = ConcurrentHashMap<String, Int>()
-    private val speciesNames = ConcurrentHashMap<String, String>()
-    private val activeSet = ConcurrentHashMap.newKeySet<String>()
+    private val _speechLogs = MutableStateFlow<List<String>>(emptyList())
+    val speechLogs: StateFlow<List<String>> = _speechLogs.asStateFlow()
 
-    private val appCtx: Context get() = getApplication<Application>().applicationContext
-    private val prefs: SharedPreferences =
-        appCtx.getSharedPreferences(SettingsKeys.PREFS_NAME, Context.MODE_PRIVATE)
-    private val uploadPrefs: SharedPreferences =
-        appCtx.getSharedPreferences(SettingsKeys.UPLOAD_PREFS, Context.MODE_PRIVATE)
+    // --- Koppeling naar Shared VM (optioneel) ---
+    private val isAttached = AtomicBoolean(false)
+    private var shared: SharedSpeciesViewModel? = null
+    private var syncJob: Job? = null
 
-    // Autosave
-    private var saveJob: Job? = null
-    private val saveDebounceMs = 600L
+    /**
+     * Koppel aan de gedeelde VM. Idempotent: extra aanroepen doen niets.
+     * Synchroniseert de lokale flows en delegeert mutatie-calls naar shared.
+     */
+    fun attachShared(sharedVm: SharedSpeciesViewModel) {
+        if (!isAttached.compareAndSet(false, true)) return
+        shared = sharedVm
 
-    fun setListening(listening: Boolean) {
-        state.value = state.value.copy(listening = listening)
-    }
+        // Initieel: neem huidige waarden over
+        _selectedSpecies.value = LinkedHashSet(sharedVm.selectedSpecies.value)
+        _tallyMap.value = sharedVm.tallyMap.value
+        _speechLogs.value = sharedVm.speechLogs.value
 
-    fun appendSpeechLog(line: String) {
-        val newLog = (state.value.speechLog + line).takeLast(200)
-        state.value = state.value.copy(speechLog = newLog)
-    }
-
-    fun addActive(speciesId: String, displayName: String) {
-        activeSet.add(speciesId)
-        speciesNames[speciesId] = displayName
-        publishState()
-    }
-
-    fun addActiveMany(items: List<Pair<String, String>>) {
-        items.forEach { (id, name) ->
-            activeSet.add(id)
-            speciesNames[id] = name
-        }
-        publishState()
-    }
-
-    fun book(speciesId: String, delta: Int) {
-        if (delta == 0) return
-        val newVal = (totalsMutable[speciesId] ?: 0) + delta
-        totalsMutable[speciesId] = newVal.coerceAtLeast(0)
-        publishState()
-        scheduleSave()
-    }
-
-    fun reset(speciesId: String) {
-        totalsMutable.remove(speciesId)
-        publishState()
-        scheduleSave()
-    }
-
-    fun acceptNewSpeciesAndBook(items: List<Triple<String, String, Int>>) {
-        // items: (id, display, amount)
-        items.forEach { (id, name, amount) ->
-            activeSet.add(id)
-            speciesNames[id] = name
-            val newVal = (totalsMutable[id] ?: 0) + amount
-            totalsMutable[id] = newVal
-        }
-        publishState()
-        scheduleSave()
-    }
-
-    private fun publishState() {
-        state.value = UiState(
-            listening = state.value.listening,
-            speechLog = state.value.speechLog,
-            totals = HashMap(totalsMutable),
-            activeSpecies = HashSet(activeSet),
-            speciesNames = HashMap(speciesNames)
-        )
-    }
-
-    /** Debounced autosave van tellingen.json + append events.log. */
-    private fun scheduleSave() {
-        saveJob?.cancel()
-        saveJob = viewModelScope.launch(Dispatchers.IO) {
-            delay(saveDebounceMs)
-            saveTotalsJson()
+        // Doorlopende sync
+        syncJob = viewModelScope.launch {
+            // Elk collect op aparte coroutine om onafhankelijk te updaten
+            launch {
+                sharedVm.selectedSpecies.collect { set ->
+                    _selectedSpecies.value = LinkedHashSet(set)
+                }
+            }
+            launch {
+                sharedVm.tallyMap.collect { map ->
+                    _tallyMap.value = map
+                }
+            }
+            launch {
+                sharedVm.speechLogs.collect { logs ->
+                    _speechLogs.value = logs
+                }
+            }
         }
     }
 
-    private fun saveTotalsJson() {
-        val dir = StorageUtils.getPublicAppDir(appCtx, SettingsKeys.DIR_TELLINGEN)
-        if (!dir.exists()) dir.mkdirs()
+    // --- Mutaties: delegeren naar shared (indien gekoppeld), anders lokaal toepassen ---
 
-        val (file, sessionId) = currentTellingFile(dir)
-        // JSON object: tijdstip, onlineid (indien beschikbaar), totals array met {id, name, count}
-        val arr = JSONArray()
-        for ((id, count) in totalsMutable) {
-            val name = speciesNames[id] ?: id
-            arr.put(JSONObject().apply {
-                put("id", id)
-                put("name", name)
-                put("count", count)
-            })
-        }
-        val root = JSONObject().apply {
-            put("sessionId", sessionId)
-            put("onlineid", getOnlineIdOrNull())
-            put("updated", DateTimeFormatter.ISO_INSTANT.format(Instant.now()))
-            put("totals", arr)
-        }
-        file.writeText(root.toString())
-    }
-
-    /** Append 1 regel naar events.log in dezelfde folder (ndjson). */
-    fun appendEventLine(obj: JSONObject) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val dir = StorageUtils.getPublicAppDir(appCtx, SettingsKeys.DIR_TELLINGEN)
-            if (!dir.exists()) dir.mkdirs()
-            val (file, _) = currentTellingFile(dir)
-            val log = File(dir, file.nameWithoutExtension + "_events.log")
-            log.appendText(obj.toString() + "\n")
+    fun setSelectedSpecies(species: Collection<String>) {
+        val s = shared
+        if (s != null && isAttached.get()) {
+            s.setSelectedSpecies(species)
+        } else {
+            val newOrdered = LinkedHashSet<String>().apply { addAll(species) }
+            _selectedSpecies.value = newOrdered
+            val current = _tallyMap.value
+            _tallyMap.value = buildMap {
+                for (sp in newOrdered) put(sp, current[sp] ?: 0)
+            }
         }
     }
 
-    private fun getOnlineIdOrNull(): String? =
-        uploadPrefs.getString(SettingsKeys.KEY_LAST_ONLINE_ID, null)
+    fun increment(species: String, delta: Int = 1) {
+        val s = shared
+        if (s != null && isAttached.get()) {
+            s.increment(species, delta)
+        } else {
+            updateLocalCount(species) { it + delta }
+        }
+    }
 
-    private fun currentTellingFile(dir: File): Pair<File, String> {
-        val online = getOnlineIdOrNull()
-        val ts = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")
-            .withZone(ZoneId.systemDefault())
-            .format(Instant.now())
-        val sessionId = (online ?: "offline") + "_" + ts
-        val file = File(dir, "$sessionId.json")
-        return file to sessionId
+    fun decrement(species: String, delta: Int = 1) {
+        val s = shared
+        if (s != null && isAttached.get()) {
+            s.decrement(species, delta)
+        } else {
+            updateLocalCount(species) { (it - delta).coerceAtLeast(0) }
+        }
+    }
+
+    fun reset(species: String) {
+        val s = shared
+        if (s != null && isAttached.get()) {
+            s.reset(species)
+        } else {
+            updateLocalCount(species) { 0 }
+        }
+    }
+
+    fun setCount(species: String, count: Int) {
+        val s = shared
+        if (s != null && isAttached.get()) {
+            s.setCount(species, count)
+        } else {
+            updateLocalCount(species) { count.coerceAtLeast(0) }
+        }
+    }
+
+    fun appendLog(line: String) {
+        val s = shared
+        if (s != null && isAttached.get()) {
+            s.appendLog(line)
+        } else {
+            _speechLogs.value = _speechLogs.value + line
+        }
+    }
+
+    fun clearAll() {
+        val s = shared
+        if (s != null && isAttached.get()) {
+            s.clearAll()
+        } else {
+            _selectedSpecies.value = linkedSetOf()
+            _tallyMap.value = emptyMap()
+            _speechLogs.value = emptyList()
+        }
+    }
+
+    // --- Helpers ---
+
+    private fun updateLocalCount(species: String, transform: (Int) -> Int) {
+        val current = _tallyMap.value
+        if (!current.containsKey(species)) return
+        val new = transform(current[species] ?: 0)
+        _tallyMap.value = current.toMutableMap().apply { put(species, new) }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        syncJob?.cancel()
     }
 }

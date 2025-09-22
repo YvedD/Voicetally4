@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Aantal kolommen voor de species tiles in Tally -->
+    <integer name="vt4_tally_span_count">4</integer>
+</resources>

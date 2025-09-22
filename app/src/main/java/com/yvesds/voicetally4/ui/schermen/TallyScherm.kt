@@ -1,245 +1,160 @@
 package com.yvesds.voicetally4.ui.schermen
 
-import android.Manifest
-import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Bundle
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.view.inputmethod.EditorInfo
+import android.widget.EditText
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
-import androidx.fragment.app.viewModels
+import androidx.fragment.app.activityViewModels
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
-import com.google.android.material.snackbar.Snackbar
-import com.yvesds.voicetally4.utils.hardware.HardwareKeyHandler
+import androidx.recyclerview.widget.RecyclerView
 import com.yvesds.voicetally4.R
-import com.yvesds.voicetally4.databinding.FragmentTallySchermBinding
-import com.yvesds.voicetally4.ui.adapters.TallyAdapter
-import com.yvesds.voicetally4.ui.adapters.TallyItem
-import com.yvesds.voicetally4.ui.tally.SimpleRecognitionListener
-import com.yvesds.voicetally4.ui.tally.SpeechParser
-import com.yvesds.voicetally4.ui.tally.TallyViewModel
-import com.yvesds.voicetally4.utils.settings.SettingsKeys
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.collectLatest
+import com.yvesds.voicetally4.shared.SharedSpeciesViewModel
+import com.yvesds.voicetally4.ui.adapters.SpeciesTileAdapter
+import com.yvesds.voicetally4.ui.dialogs.SpeciesAdjustDialogFragment
+import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import java.util.Locale
 
-class TallyScherm : Fragment(), HardwareKeyHandler.Callback, NieuweSoortenDialoogScherm.Listener {
+@AndroidEntryPoint
+class TallyScherm : Fragment() {
 
-    private var _binding: FragmentTallySchermBinding? = null
-    private val binding get() = _binding!!
+    private val sharedVm: SharedSpeciesViewModel by activityViewModels()
 
-    private val vm: TallyViewModel by viewModels()
-    private lateinit var parser: SpeechParser
+    private lateinit var recyclerLog: RecyclerView
+    private lateinit var recyclerSpecies: RecyclerView
+    private lateinit var tvListening: TextView
+    private lateinit var inputManual: EditText
 
-    private var speech: SpeechRecognizer? = null
-    private var isListening = false
+    private lateinit var logAdapter: SpeechLogAdapter
+    private lateinit var speciesAdapter: SpeciesTileAdapter
 
-    private lateinit var tallyAdapter: TallyAdapter
-    private lateinit var logAdapter: SimpleLogAdapter
-
-    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
-        _binding = FragmentTallySchermBinding.inflate(inflater, container, false)
-        parser = SpeechParser(requireContext().applicationContext)
-        setupLists()
-        setupManualInput()
-        return binding.root
-    }
-
-    private fun setupLists() {
-        tallyAdapter = TallyAdapter(
-            onIncrement = { id -> vm.book(id, +1) },
-            onDecrement = { id -> vm.book(id, -1) },
-            onReset = { id -> vm.reset(id) }
-        )
-        binding.recyclerTally.layoutManager = LinearLayoutManager(requireContext())
-        binding.recyclerTally.adapter = tallyAdapter
-
-        logAdapter = SimpleLogAdapter()
-        binding.recyclerLog.layoutManager = LinearLayoutManager(requireContext()).apply { stackFromEnd = true }
-        binding.recyclerLog.adapter = logAdapter
-    }
-
-    private fun setupManualInput() {
-        binding.inputManual.setOnEditorActionListener { v, actionId, _ ->
-            if (actionId == EditorInfo.IME_ACTION_DONE) {
-                val text = v.text?.toString().orEmpty()
-                if (text.isNotBlank()) {
-                    lifecycleScope.launch { handleUtterance(text) }
-                    v.text = null
-                }
-                true
-            } else false
-        }
-    }
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?,
+    ): View = inflater.inflate(R.layout.fragment_tally_scherm, container, false)
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        lifecycleScope.launch {
-            vm.uiState.collectLatest { st ->
-                binding.tvListening.isVisible = st.listening
-                binding.tvListening.text = getString(R.string.listening_status_listening)
 
-                logAdapter.submitList(st.speechLog)
+        recyclerLog = view.findViewById(R.id.recyclerLog)
+        recyclerSpecies = view.findViewById(R.id.recyclerSpecies)
+        tvListening = view.findViewById(R.id.tvListening)
+        inputManual = view.findViewById(R.id.inputManual)
 
-                val items = st.totals.entries
-                    .map { (id, count) -> TallyItem(id, st.speciesNames[id] ?: id, count) }
-                    .sortedBy { it.name.lowercase(Locale.getDefault()) }
-                tallyAdapter.submitList(items)
-            }
-        }
-    }
-
-    override fun onDestroyView() {
-        super.onDestroyView()
-        stopListening()
-        _binding = null
-    }
-
-    // ---------------- HardwareKeyHandler ----------------
-
-    override fun onHardwareVolumeUp(): Boolean {
-        if (!isAdded || _binding == null) return false
-        if (isListening) return true // al bezig -> negeren maar consumeren
-        startListening()
-        return true
-    }
-
-    // ---------------- Speech ----------------
-
-    private fun startListening() {
-        if (!SpeechRecognizer.isRecognitionAvailable(requireContext())) {
-            Snackbar.make(binding.root, "Spraakherkenning niet beschikbaar", Snackbar.LENGTH_LONG).show()
-            return
-        }
-        if (!hasRecordPermission(requireContext())) {
-            Snackbar.make(binding.root, "Microfoon-permissie ontbreekt", Snackbar.LENGTH_LONG).show()
-            return
+        // Log bovenaan
+        logAdapter = SpeechLogAdapter()
+        recyclerLog.apply {
+            layoutManager = LinearLayoutManager(requireContext(), RecyclerView.VERTICAL, false)
+            adapter = logAdapter
+            setHasFixedSize(true)
         }
 
-        stopListening() // safety
-        speech = SpeechRecognizer.createSpeechRecognizer(requireContext())
-        speech?.setRecognitionListener(
-            SimpleRecognitionListener(
-                onReady = {
-                    isListening = true
-                    vm.setListening(true)
-                },
-                onFinal = { text: String ->
-                    lifecycleScope.launch { handleUtterance(text) }
-                },
-                onError = { code: Int ->
-                    vm.appendSpeechLog("[ERR:$code]")
-                },
-                onEnd = {
-                    isListening = false
-                    vm.setListening(false)
-                    stopListening()
-                }
-            )
+        // Species tiles (grid) met display-namen uit sharedVm.displayNames
+        val span = resources.getInteger(R.integer.vt4_tally_span_count).coerceAtLeast(2)
+        speciesAdapter = SpeciesTileAdapter(
+            onItemClick = { speciesCanonical ->
+                SpeciesAdjustDialogFragment.newInstance(speciesCanonical)
+                    .show(childFragmentManager, "SpeciesAdjustDialog")
+            },
+            displayNameOf = { canonical -> sharedVm.displayNameOf(canonical) }
         )
-
-        val silenceMs = requireContext()
-            .getSharedPreferences(SettingsKeys.SPEECH_PREFS, Context.MODE_PRIVATE)
-            .getInt(SettingsKeys.KEY_SPEECH_SILENCE_TIMEOUT_MS, SettingsKeys.DEFAULT_SPEECH_SILENCE_TIMEOUT_MS)
-
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, silenceMs)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, silenceMs)
-        }
-        speech?.startListening(intent)
-    }
-
-    private fun stopListening() {
-        speech?.stopListening()
-        speech?.cancel()
-        speech?.destroy()
-        speech = null
-        isListening = false
-        vm.setListening(false)
-    }
-
-    private fun hasRecordPermission(ctx: Context): Boolean =
-        ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-
-    // ---------------- Parse & apply ----------------
-
-    private suspend fun handleUtterance(text: String) {
-        withContext(Dispatchers.Main) {
-            vm.appendSpeechLog(text)
-        }
-        val st = vm.uiState.value
-        val res = withContext(Dispatchers.Default) {
-            parser.parseOneUtterance(text, st.activeSpecies)
+        recyclerSpecies.apply {
+            layoutManager = GridLayoutManager(requireContext(), span)
+            adapter = speciesAdapter
+            setHasFixedSize(true)
+            itemAnimator = null
         }
 
-        if (res.active.isNotEmpty()) {
-            vm.appendEventLine(JSONObject().apply {
-                put("type", "book_active")
-                put("items", res.active.map { JSONObject().put("id", it.speciesId).put("name", it.displayName).put("amount", it.amount) })
-                put("ts", System.currentTimeMillis())
-            })
-            res.active.forEach { vm.book(it.speciesId, it.amount) }
-        }
-
-        if (res.inactive.isNotEmpty() && isAdded && _binding != null) {
-            val proposals = res.inactive.map {
-                NieuweSoortenDialoogScherm.Proposal(it.speciesId, it.displayName, it.amount)
+        // Observe flows
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                // Logregels
+                launch {
+                    sharedVm.speechLogs.collect { logs ->
+                        logAdapter.submit(logs)
+                        recyclerLog.post {
+                            recyclerLog.scrollToPosition((logs.size - 1).coerceAtLeast(0))
+                        }
+                    }
+                }
+                // Tellers + display-namen.
+                // Bij elke wijziging in teller of naam-map, lijst opnieuw opbouwen.
+                launch {
+                    sharedVm.tallyMap.collect { map ->
+                        val items = sharedVm.selectedSpecies.value.map { s ->
+                            SpeciesTileAdapter.Tile(s, map[s] ?: 0)
+                        }
+                        speciesAdapter.submit(items)
+                    }
+                }
+                launch {
+                    sharedVm.displayNames.collect {
+                        // display-namen gewijzigd → zelfde canonieke set opnieuw renderen
+                        val map = sharedVm.tallyMap.value
+                        val items = sharedVm.selectedSpecies.value.map { s ->
+                            SpeciesTileAdapter.Tile(s, map[s] ?: 0)
+                        }
+                        speciesAdapter.submit(items)
+                    }
+                }
             }
-            NieuweSoortenDialoogScherm.newInstance(proposals)
-                .show(parentFragmentManager, "newSpeciesDialog")
         }
-    }
 
-    // ---------------- NieuweSoortenDialoogScherm.Listener ----------------
-
-    override fun onNieuweSoortenGekozen(selected: List<NieuweSoortenDialoogScherm.Proposal>) {
-        if (selected.isEmpty()) return
-
-        // Log event
-        vm.appendEventLine(JSONObject().apply {
-            put("type", "add_inactive_species")
-            put("items", selected.map { JSONObject().put("id", it.speciesId).put("name", it.displayName).put("amount", it.amount) })
-            put("ts", System.currentTimeMillis())
-        })
-
-        // Voeg toe aan actieve set + meteen boeken (met aantallen) — gebruikt bestaande ViewModel API
-        val triples = selected.map { Triple(it.speciesId, it.displayName, it.amount) }
-        vm.acceptNewSpeciesAndBook(triples)
-
-        // Korte feedback zonder extra stringresource
-        Snackbar.make(binding.root, getString(R.string.tally_added_new_species, selected.size), Snackbar.LENGTH_SHORT).show()
-    }
-
-    // --------------- simpele log-adapter ---------------
-
-    private class SimpleLogAdapter : androidx.recyclerview.widget.RecyclerView.Adapter<LogVH>() {
-        private var data: List<String> = emptyList()
-        fun submitList(list: List<String>) { data = list; notifyDataSetChanged() }
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): LogVH {
-            val tv = LayoutInflater.from(parent.context)
-                .inflate(R.layout.item_log_line, parent, false) as TextView
-            return LogVH(tv)
+        // Handmatige invoer (debug) → naar log
+        inputManual.setOnEditorActionListener { v, _, _ ->
+            val text = v.text?.toString()?.trim().orEmpty()
+            if (text.isNotEmpty()) {
+                sharedVm.appendLog("MANUAL: $text")
+                v.text = null
+            }
+            true
         }
-        override fun onBindViewHolder(holder: LogVH, position: Int) { holder.bind(data[position]) }
-        override fun getItemCount(): Int = data.size
+
+        // Listening-label optioneel zichtbaar maken zodra je spraak koppelt
+        tvListening.isVisible = false
     }
-    private class LogVH(private val tv: TextView) : androidx.recyclerview.widget.RecyclerView.ViewHolder(tv) {
-        fun bind(s: String) { tv.text = s }
+
+    // --- Simpele log adapter (gebaseerd op item_log_line.xml) ---
+    private class SpeechLogAdapter : RecyclerView.Adapter<SpeechLogAdapter.VH>() {
+        private val items = ArrayList<String>()
+
+        fun submit(list: List<String>) {
+            val diff = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+                override fun getOldListSize() = items.size
+                override fun getNewListSize() = list.size
+                override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int) =
+                    oldItemPosition == newItemPosition
+                override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int) =
+                    items[oldItemPosition] == list[newItemPosition]
+            })
+            items.clear()
+            items.addAll(list)
+            diff.dispatchUpdatesTo(this)
+        }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+            val v = LayoutInflater.from(parent.context)
+                .inflate(R.layout.item_log_line, parent, false)
+            return VH(v)
+        }
+
+        override fun onBindViewHolder(holder: VH, position: Int) {
+            holder.tv.text = items[position]
+        }
+
+        override fun getItemCount() = items.size
+
+        class VH(view: View) : RecyclerView.ViewHolder(view) {
+            val tv: TextView = view.findViewById(R.id.tvLogLine)
+        }
     }
 }

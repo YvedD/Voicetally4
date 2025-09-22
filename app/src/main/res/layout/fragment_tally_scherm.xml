@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- VT3-achtige opbouw:
+     - Bovenaan: log (verticale lijst)
+     - Onder: grid met soort-tiles (klik = popup)
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/root"
     android:layout_width="match_parent"
@@ -15,7 +19,7 @@
         android:padding="4dp"
         android:scrollbars="vertical" />
 
-    <!-- Luisterstatus -->
+    <!-- Luisterstatus (optioneel zichtbaar als je deze later koppelt) -->
     <TextView
         android:id="@+id/tvListening"
         android:layout_width="wrap_content"
@@ -24,7 +28,7 @@
         android:paddingTop="6dp"
         android:visibility="gone" />
 
-    <!-- Handmatige invoer (optioneel; Enter = parse) -->
+    <!-- Handmatige invoer (debug) -->
     <EditText
         android:id="@+id/inputManual"
         android:layout_width="match_parent"
@@ -34,9 +38,9 @@
         android:inputType="text"
         android:paddingTop="6dp" />
 
-    <!-- Tellers (onderaan, vult rest) -->
+    <!-- Soorten-tiles (grid) -->
     <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/recyclerTally"
+        android:id="@+id/recyclerSpecies"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"

@@ -1,11 +1,17 @@
 package com.yvesds.voicetally4.ui.schermen
 
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -15,13 +21,15 @@ import com.google.android.flexbox.FlexDirection
 import com.google.android.flexbox.FlexWrap
 import com.google.android.flexbox.FlexboxLayoutManager
 import com.google.android.flexbox.JustifyContent
-import com.google.android.material.progressindicator.CircularProgressIndicator
 import com.google.android.material.snackbar.Snackbar
 import com.yvesds.voicetally4.R
 import com.yvesds.voicetally4.databinding.FragmentSoortSelectieSchermBinding
+import com.yvesds.voicetally4.shared.SharedSpeciesViewModel
 import com.yvesds.voicetally4.ui.adapters.AliasTileAdapter
+import com.yvesds.voicetally4.ui.data.SoortAlias
 import com.yvesds.voicetally4.ui.domein.SoortSelectieViewModel
 import com.yvesds.voicetally4.ui.domein.SoortSelectieViewModel.UiState
+import com.yvesds.voicetally4.utils.io.DocumentsAccess
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 
@@ -32,9 +40,23 @@ class SoortSelectieScherm : Fragment() {
     private val binding get() = _binding!!
 
     private val viewModel: SoortSelectieViewModel by viewModels()
+    private val sharedVm: SharedSpeciesViewModel by activityViewModels()
 
     private lateinit var adapter: AliasTileAdapter
-    private lateinit var progress: CircularProgressIndicator
+
+    // ACTION_OPEN_DOCUMENT_TREE voor Documents (of VoiceTally4)
+    private val pickTreeLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        if (res.resultCode == Activity.RESULT_OK) {
+            val uri: Uri? = res.data?.data
+            if (uri != null) {
+                // Persistente toestemming opslaan
+                DocumentsAccess.persistTreeUri(requireContext(), uri)
+                Snackbar.make(binding.root, "Documenten-map gekoppeld.", Snackbar.LENGTH_SHORT).show()
+                // Opnieuw laden
+                viewModel.forceReload()
+            }
+        }
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -48,7 +70,6 @@ class SoortSelectieScherm : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Flexbox: wrap tiles, zoveel mogelijk per rij
         val lm = FlexboxLayoutManager(requireContext()).apply {
             flexDirection = FlexDirection.ROW
             flexWrap = FlexWrap.WRAP
@@ -63,60 +84,31 @@ class SoortSelectieScherm : Fragment() {
         adapter = AliasTileAdapter(
             isSelected = { tileName -> viewModel.isSelected(tileName) },
             onToggle = { tileName ->
-                viewModel.toggleSelection(tileName) // alleen visueel toggelen; items blijven gelijk
+                viewModel.toggleSelection(tileName)
                 binding.recycler.post { adapter.notifyDataSetChanged() }
-                showSelectionSnackbar()
+                showSelectionHint()
             }
         )
         binding.recycler.adapter = adapter
 
-        // Progress overlay (programmatic, geen XML-wijziging)
-        progress = CircularProgressIndicator(requireContext()).apply {
-            isIndeterminate = true
-            visibility = View.GONE
-        }
-        binding.root.addView(
-            progress,
-            ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
-
-        // Center progress telkens als de layout verandert (ook bij rotatie)
-        val centerProgress: () -> Unit = {
-            progress.x = (binding.root.width - progress.width) / 2f
-            progress.y = (binding.root.height - progress.height) / 2f
-        }
-        binding.root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> centerProgress() }
-        progress.post { centerProgress() }
-
-        // Observe state
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { viewModel.uiState.collect { renderState(it) } }
             }
         }
 
-        // Start laden (eenmalig)
         viewModel.loadAliases()
 
-        // Navigeren naar TallyScherm
         binding.btnOk.setOnClickListener {
-            val current = (viewModel.uiState.value as? UiState.Success)?.items.orEmpty()
-            val chosenCanonical = current.asSequence()
-                .filter { viewModel.isSelected(it.tileName) }
-                .map { it.canonical }
-                .toList()
-
+            val (chosenCanonical, displayMap) = buildSelectionAndDisplayMap()
+            sharedVm.setSelectedSpecies(chosenCanonical)
+            if (displayMap.isNotEmpty()) sharedVm.setDisplayNames(displayMap)
             val msg = if (chosenCanonical.isEmpty()) {
                 getString(R.string.chosen_species_none)
             } else {
                 getString(R.string.chosen_species_prefix, chosenCanonical.joinToString(", "))
             }
             Snackbar.make(binding.root, msg, Snackbar.LENGTH_SHORT).show()
-
-            // Ga door naar het TallyScherm (action staat in nav_graph onder het bron-fragment)
             findNavController().navigate(R.id.action_soortSelectieScherm_to_tallyScherm)
         }
     }
@@ -125,36 +117,65 @@ class SoortSelectieScherm : Fragment() {
         when (state) {
             is UiState.Loading -> {
                 binding.emptyView.isVisible = false
-                progress.visibility = View.VISIBLE
-                progress.contentDescription = state.message
             }
             is UiState.Success -> {
-                progress.visibility = View.GONE
-                adapter.submitList(state.items)
-                binding.emptyView.isVisible = state.items.isEmpty()
+                val tiles: List<SoortAlias> = state.items.map {
+                    SoortAlias(
+                        soortId = it.soortId,
+                        canonical = it.canonical,
+                        tileName = it.tileName,
+                        aliases = it.aliases
+                    )
+                }
+                adapter.submitList(tiles)
+                binding.emptyView.isVisible = tiles.isEmpty()
+                showSelectionHint()
             }
             is UiState.Error -> {
-                progress.visibility = View.GONE
                 adapter.submitList(emptyList())
                 binding.emptyView.isVisible = true
-                Snackbar.make(binding.root, state.message, Snackbar.LENGTH_LONG).show()
+                val actionLabel = if (DocumentsAccess.hasPersistedUri(requireContext())) {
+                    // SAF is al gekoppeld -> gebruikershint
+                    "Controleer aliasmapping.csv"
+                } else {
+                    // Vraag user om de map te koppelen (1x)
+                    "Koppel Documents-map"
+                }
+                Snackbar.make(binding.root, state.message, Snackbar.LENGTH_LONG)
+                    .setAction(actionLabel) {
+                        if (!DocumentsAccess.hasPersistedUri(requireContext())) {
+                            launchPickTree()
+                        }
+                    }
+                    .show()
             }
         }
     }
 
-    private fun showSelectionSnackbar() {
-        val current = (viewModel.uiState.value as? UiState.Success)?.items.orEmpty()
-        if (current.isEmpty()) return
+    /** Start ACTION_OPEN_DOCUMENT_TREE zodat we VoiceTally4 (of Documents) kunnen koppelen. */
+    private fun launchPickTree() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            putExtra(DocumentsContract.EXTRA_INITIAL_URI, null as Uri?)
+        }
+        pickTreeLauncher.launch(intent)
+    }
 
-        val canonical = current.asSequence()
-            .filter { viewModel.isSelected(it.tileName) }
-            .map { it.canonical }
-            .toList()
+    /** Huidige selectie als (canonicals, displayMap). */
+    private fun buildSelectionAndDisplayMap(): Pair<List<String>, Map<String, String>> {
+        val state = viewModel.uiState.value
+        if (state !is UiState.Success) return emptyList<String>() to emptyMap()
+        val selected = state.items.filter { viewModel.isSelected(it.tileName) }
+        val chosenCanonical = selected.map { it.canonical }
+        val displayMap = selected.associate { it.canonical to it.tileName }
+        return chosenCanonical to displayMap
+    }
 
-        val msg = if (canonical.isEmpty()) {
+    private fun showSelectionHint() {
+        val (chosenCanonical, _) = buildSelectionAndDisplayMap()
+        val msg = if (chosenCanonical.isEmpty()) {
             getString(R.string.chosen_species_none)
         } else {
-            getString(R.string.chosen_species_prefix, canonical.joinToString(", "))
+            getString(R.string.chosen_species_prefix, chosenCanonical.joinToString(", "))
         }
         Snackbar.make(binding.root, msg, Snackbar.LENGTH_SHORT).show()
     }
