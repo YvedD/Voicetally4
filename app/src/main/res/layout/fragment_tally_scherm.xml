@@ -1,51 +1,67 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- VT3-achtige opbouw:
-     - Bovenaan: log (verticale lijst)
-     - Onder: grid met soort-tiles (klik = popup)
--->
+<!-- VT3-achtige indeling voor VT4 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/root"
+    android:id="@+id/tallyRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@android:color/black"
     android:orientation="vertical"
-    android:background="?attr/colorSurface"
-    android:padding="12dp">
+    android:padding="8dp">
 
-    <!-- Spraaklog (bovenaan) -->
+    <!-- Speech Log (bovenaan, vaste hoogte) -->
     <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/recyclerLog"
+        android:id="@+id/recyclerViewSpeechLog"
         android:layout_width="match_parent"
-        android:layout_height="160dp"
+        android:layout_height="250dp"
+        android:background="@drawable/border_button"
         android:padding="4dp"
         android:scrollbars="vertical" />
 
-    <!-- Luisterstatus (optioneel zichtbaar als je deze later koppelt) -->
-    <TextView
-        android:id="@+id/tvListening"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/listening_status_listening"
-        android:paddingTop="6dp"
-        android:visibility="gone" />
-
-    <!-- Handmatige invoer (debug) -->
-    <EditText
-        android:id="@+id/inputManual"
+    <!-- Knoppen rij -->
+    <LinearLayout
+        android:id="@+id/buttonsRow"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="handmatige invoer (debug)"
-        android:imeOptions="actionDone"
-        android:inputType="text"
-        android:paddingTop="6dp" />
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingTop="8dp">
 
-    <!-- Soorten-tiles (grid) -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/buttonEndSession"
+            style="@style/Widget.VoiceTally4.Button.Outlined"
+            android:layout_width="0dp"
+            android:layout_height="60dp"
+            android:layout_margin="4dp"
+            android:layout_weight="1"
+            android:text="Save" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/buttonAddSpecies"
+            style="@style/Widget.VoiceTally4.Button.Outlined"
+            android:layout_width="0dp"
+            android:layout_height="60dp"
+            android:layout_margin="4dp"
+            android:layout_weight="1"
+            android:text="Add" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/buttonExportObservations"
+            style="@style/Widget.VoiceTally4.Button.Outlined"
+            android:layout_width="0dp"
+            android:layout_height="60dp"
+            android:layout_margin="4dp"
+            android:layout_weight="1"
+            android:text="Export" />
+    </LinearLayout>
+
+    <!-- Tellers (vult de rest) -->
     <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/recyclerSpecies"
+        android:id="@+id/recyclerViewTally"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:paddingTop="8dp"
         android:clipToPadding="false"
+        android:padding="4dp"
         android:scrollbars="vertical" />
 
 </LinearLayout>

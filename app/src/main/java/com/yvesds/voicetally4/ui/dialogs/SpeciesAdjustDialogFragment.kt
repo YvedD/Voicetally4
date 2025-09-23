@@ -2,78 +2,118 @@ package com.yvesds.voicetally4.ui.dialogs
 
 import android.app.Dialog
 import android.os.Bundle
-import android.view.LayoutInflater
-import android.widget.Button
+import android.text.InputFilter
+import android.text.InputType
+import android.view.View
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import androidx.core.os.bundleOf
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.activityViewModels
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import com.yvesds.voicetally4.R
-import com.yvesds.voicetally4.shared.SharedSpeciesViewModel
-import dagger.hilt.android.AndroidEntryPoint
+import com.google.android.material.button.MaterialButton
+import com.yvesds.voicetally4.ui.shared.SharedSpeciesViewModel
+import com.yvesds.voicetally4.ui.tally.TallyViewModel
 
 /**
- * VT3-achtige popup om een teller aan te passen (±/reset/instellen).
- * Werkt rechtstreeks op SharedSpeciesViewModel.
+ * Eenvoudige aanpas-dialog voor één soort:
+ * - Toont displayName (of canonical)
+ * - [+] [-] [reset] knoppen
+ * - Directe invoer van een nieuw aantal
+ * - OK schrijft via TallyViewModel.setCount(...)
+ *
+ * Gebruik: SpeciesAdjustDialogFragment.newInstance(canonical).show(...)
  */
-@AndroidEntryPoint
 class SpeciesAdjustDialogFragment : DialogFragment() {
 
     private val sharedVm: SharedSpeciesViewModel by activityViewModels()
+    private val tallyVm: TallyViewModel by activityViewModels()
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
-        val species = requireArguments().getString(ARG_SPECIES).orEmpty()
+        val ctx = requireContext()
+        val canonical = requireArguments().getString(ARG_CANONICAL) ?: ""
 
-        val view = LayoutInflater.from(requireContext())
-            .inflate(R.layout.dialog_species_adjust_vt4, null, false)
+        // Titel opbouwen (display name indien bekend)
+        val display = sharedVm.displayNames.value[canonical] ?: canonical
+        val current = tallyVm.getCount(canonical)
 
-        val tvTitle: TextView = view.findViewById(R.id.tvTitle)
-        val tvCurrent: TextView = view.findViewById(R.id.tvCurrent)
-        val etSet: EditText = view.findViewById(R.id.etSet)
-        val btnMinus: Button = view.findViewById(R.id.btnMinus)
-        val btnPlus: Button = view.findViewById(R.id.btnPlus)
-        val btnReset: Button = view.findViewById(R.id.btnReset)
-
-        tvTitle.text = species
-
-        fun refresh() {
-            val cur = sharedVm.tallyMap.value[species] ?: 0
-            tvCurrent.text = cur.toString()
-        }
-        refresh()
-
-        btnMinus.setOnClickListener {
-            sharedVm.decrement(species, 1)
-            refresh()
-        }
-        btnPlus.setOnClickListener {
-            sharedVm.increment(species, 1)
-            refresh()
-        }
-        btnReset.setOnClickListener {
-            sharedVm.reset(species)
-            etSet.setText("")
-            refresh()
+        // UI container
+        val dp = ctx.resources.displayMetrics.density
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((16 * dp).toInt(), (12 * dp).toInt(), (16 * dp).toInt(), 0)
         }
 
-        return MaterialAlertDialogBuilder(requireContext())
-            .setView(view)
-            .setPositiveButton(R.string.ok) { _, _ ->
-                val v = etSet.text?.toString()?.trim().orEmpty()
-                if (v.isNotEmpty()) {
-                    v.toIntOrNull()?.let { sharedVm.setCount(species, it) }
+        // Naam + huidig aantal
+        val nameView = TextView(ctx).apply {
+            text = display
+            textSize = 18f
+        }
+        val countView = TextView(ctx).apply {
+            text = "Huidig: $current"
+            textSize = 14f
+        }
+
+        // Input veld om exact aantal te zetten
+        val input = EditText(ctx).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            filters = arrayOf(InputFilter.LengthFilter(7))
+            hint = "Nieuw aantal…"
+        }
+
+        // Knoppenrij: [-]  [reset]  [+]
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val btnDec = MaterialButton(ctx).apply { text = "−" }
+            val btnRst = MaterialButton(ctx).apply { text = "reset" }
+            val btnInc = MaterialButton(ctx).apply { text = "+" }
+
+            fun bump(delta: Int) {
+                val cur = tallyVm.getCount(canonical)
+                val next = (cur + delta).coerceAtLeast(0)
+                tallyVm.setCount(canonical, next)
+                countView.text = "Huidig: $next"
+            }
+
+            btnDec.setOnClickListener { bump(-1) }
+            btnInc.setOnClickListener { bump(+1) }
+            btnRst.setOnClickListener {
+                tallyVm.reset(canonical)
+                countView.text = "Huidig: 0"
+            }
+
+            addView(btnDec, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(btnRst, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(btnInc, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        }
+
+        container.addView(nameView)
+        container.addView(countView)
+        container.addView(row)
+        container.addView(input)
+
+        return AlertDialog.Builder(ctx)
+            .setTitle("Telling aanpassen")
+            .setView(container)
+            .setNegativeButton("Annuleren", null)
+            .setPositiveButton("OK") { _, _ ->
+                val txt = input.text?.toString()?.trim().orEmpty()
+                if (txt.isNotEmpty()) {
+                    val number = txt.toIntOrNull()
+                    if (number != null && number >= 0) {
+                        tallyVm.setCount(canonical, number)
+                    }
                 }
             }
-            .setNegativeButton(R.string.annuleer, null)
             .create()
     }
 
     companion object {
-        private const val ARG_SPECIES = "species"
-        fun newInstance(speciesName: String) = SpeciesAdjustDialogFragment().apply {
-            arguments = bundleOf(ARG_SPECIES to speciesName)
+        private const val ARG_CANONICAL = "arg.canonical"
+
+        fun newInstance(canonical: String) = SpeciesAdjustDialogFragment().apply {
+            arguments = bundleOf(ARG_CANONICAL to canonical)
         }
     }
 }

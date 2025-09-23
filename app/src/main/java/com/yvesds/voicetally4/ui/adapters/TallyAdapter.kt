@@ -1,75 +1,49 @@
 package com.yvesds.voicetally4.ui.adapters
 
 import android.view.LayoutInflater
-import android.view.View
 import android.view.ViewGroup
-import android.widget.TextView
 import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.button.MaterialButton
-import com.yvesds.voicetally4.R
+import com.yvesds.voicetally4.databinding.ItemTallyBinding
+import com.yvesds.voicetally4.ui.tally.TallyViewModel
 
 /**
- * Back-compat adapter voor een "tellerlijst".
- * - Houdt een eigen Item type aan (speciesName + count) zodat er geen afhankelijkheid
- *   meer is van TallyScherm.TallyItem of andere externe types.
- * - Gebruikt item_tally.xml, maar verbergt de inline ±/reset knoppen (popup-UX).
- * - item click -> callback (bijv. om SpeciesAdjustDialog te tonen).
- *
- * Kan veilig blijven staan, ook als je elders SpeciesTileAdapter gebruikt.
+ * Toont displayName (tile-name) i.p.v. canonical, met +/-/reset knoppen.
  */
 class TallyAdapter(
-    private val onItemClick: (speciesName: String) -> Unit
-) : RecyclerView.Adapter<TallyAdapter.VH>() {
+    private val onIncrement: (canonical: String) -> Unit,
+    private val onDecrement: (canonical: String) -> Unit,
+    private val onReset: (canonical: String) -> Unit
+) : ListAdapter<TallyViewModel.TallyItem, TallyAdapter.VH>(DIFF) {
 
-    data class Item(val speciesName: String, val count: Int)
+    companion object {
+        private val DIFF = object : DiffUtil.ItemCallback<TallyViewModel.TallyItem>() {
+            override fun areItemsTheSame(oldItem: TallyViewModel.TallyItem, newItem: TallyViewModel.TallyItem): Boolean =
+                oldItem.canonical == newItem.canonical
 
-    private val items = ArrayList<Item>()
-
-    fun submit(newItems: List<Item>) {
-        val diff = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
-            override fun getOldListSize() = items.size
-            override fun getNewListSize() = newItems.size
-            override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean {
-                return items[oldItemPosition].speciesName == newItems[newItemPosition].speciesName
-            }
-            override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean {
-                return items[oldItemPosition] == newItems[newItemPosition]
-            }
-        })
-        items.clear()
-        items.addAll(newItems)
-        diff.dispatchUpdatesTo(this)
-    }
-
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-        val v = LayoutInflater.from(parent.context)
-            .inflate(R.layout.item_tally, parent, false)
-        return VH(v)
-    }
-
-    override fun onBindViewHolder(holder: VH, position: Int) {
-        val item = items[position]
-        holder.textSpeciesName.text = item.speciesName
-        holder.textCount.text = item.count.toString()
-
-        // Inline knoppen verbergen: we werken met popup-UX (VT3-stijl)
-        holder.buttonInc.visibility = View.GONE
-        holder.buttonDec.visibility = View.GONE
-        holder.buttonReset.visibility = View.GONE
-
-        holder.itemView.setOnClickListener {
-            onItemClick.invoke(item.speciesName)
+            override fun areContentsTheSame(oldItem: TallyViewModel.TallyItem, newItem: TallyViewModel.TallyItem): Boolean =
+                oldItem == newItem
         }
     }
 
-    override fun getItemCount(): Int = items.size
+    class VH(val binding: ItemTallyBinding) : RecyclerView.ViewHolder(binding.root)
 
-    class VH(view: View) : RecyclerView.ViewHolder(view) {
-        val textSpeciesName: TextView = view.findViewById(R.id.textSpeciesName)
-        val textCount: TextView = view.findViewById(R.id.textCount)
-        val buttonInc: MaterialButton = view.findViewById(R.id.buttonIncrement)
-        val buttonDec: MaterialButton = view.findViewById(R.id.buttonDecrement)
-        val buttonReset: MaterialButton = view.findViewById(R.id.buttonReset)
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+        val inflater = LayoutInflater.from(parent.context)
+        val binding = ItemTallyBinding.inflate(inflater, parent, false)
+        return VH(binding)
+    }
+
+    override fun onBindViewHolder(holder: VH, position: Int) {
+        val item = getItem(position)
+        holder.binding.apply {
+            textSpeciesName.text = item.displayName
+            textCount.text = item.count.toString()
+
+            buttonIncrement.setOnClickListener { onIncrement(item.canonical) }
+            buttonDecrement.setOnClickListener { onDecrement(item.canonical) }
+            buttonReset.setOnClickListener     { onReset(item.canonical) }
+        }
     }
 }

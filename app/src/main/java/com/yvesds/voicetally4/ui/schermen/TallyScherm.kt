@@ -4,157 +4,120 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.EditText
-import android.widget.TextView
-import androidx.core.view.isVisible
+import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
+import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.recyclerview.widget.DiffUtil
-import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-import com.yvesds.voicetally4.R
-import com.yvesds.voicetally4.shared.SharedSpeciesViewModel
-import com.yvesds.voicetally4.ui.adapters.SpeciesTileAdapter
-import com.yvesds.voicetally4.ui.dialogs.SpeciesAdjustDialogFragment
-import dagger.hilt.android.AndroidEntryPoint
+import com.yvesds.voicetally4.databinding.FragmentTallySchermBinding
+import com.yvesds.voicetally4.ui.adapters.SpeechLogAdapter
+import com.yvesds.voicetally4.ui.adapters.TallyAdapter
+import com.yvesds.voicetally4.ui.shared.SharedSpeciesViewModel
+import com.yvesds.voicetally4.ui.tally.TallyViewModel
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
-@AndroidEntryPoint
+/**
+ * VT3-look & feel in VT4:
+ * - Logvenster boven (met border in layout)
+ * - 3 knoppen: Save / Add / Export
+ * - Tellers onderaan (displayName = tile name)
+ *
+ * Belangrijk: TallyViewModel is no-arg en wordt gevoed vanuit SharedSpeciesViewModel.
+ */
 class TallyScherm : Fragment() {
 
+    private var _binding: FragmentTallySchermBinding? = null
+    private val binding get() = _binding!!
+
     private val sharedVm: SharedSpeciesViewModel by activityViewModels()
+    private val tallyVm: TallyViewModel by viewModels() // no-arg VM
 
-    private lateinit var recyclerLog: RecyclerView
-    private lateinit var recyclerSpecies: RecyclerView
-    private lateinit var tvListening: TextView
-    private lateinit var inputManual: EditText
-
+    private lateinit var tallyAdapter: TallyAdapter
     private lateinit var logAdapter: SpeechLogAdapter
-    private lateinit var speciesAdapter: SpeciesTileAdapter
 
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
         savedInstanceState: Bundle?,
-    ): View = inflater.inflate(R.layout.fragment_tally_scherm, container, false)
+    ): View {
+        _binding = FragmentTallySchermBinding.inflate(inflater, container, false)
+        return binding.root
+    }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        recyclerLog = view.findViewById(R.id.recyclerLog)
-        recyclerSpecies = view.findViewById(R.id.recyclerSpecies)
-        tvListening = view.findViewById(R.id.tvListening)
-        inputManual = view.findViewById(R.id.inputManual)
-
-        // Log bovenaan
+        // Log venster (bovenaan)
         logAdapter = SpeechLogAdapter()
-        recyclerLog.apply {
-            layoutManager = LinearLayoutManager(requireContext(), RecyclerView.VERTICAL, false)
+        binding.recyclerViewSpeechLog.apply {
+            layoutManager = LinearLayoutManager(requireContext())
             adapter = logAdapter
-            setHasFixedSize(true)
+            setHasFixedSize(false)
         }
+        logAdapter.setAll(listOf("ℹ️ Klaar voor telling…"))
 
-        // Species tiles (grid) met display-namen uit sharedVm.displayNames
-        val span = resources.getInteger(R.integer.vt4_tally_span_count).coerceAtLeast(2)
-        speciesAdapter = SpeciesTileAdapter(
-            onItemClick = { speciesCanonical ->
-                SpeciesAdjustDialogFragment.newInstance(speciesCanonical)
-                    .show(childFragmentManager, "SpeciesAdjustDialog")
-            },
-            displayNameOf = { canonical -> sharedVm.displayNameOf(canonical) }
+        // Tellers
+        tallyAdapter = TallyAdapter(
+            onIncrement = { canonical -> tallyVm.increment(canonical) },
+            onDecrement = { canonical -> tallyVm.decrement(canonical) },
+            onReset     = { canonical -> tallyVm.reset(canonical) }
         )
-        recyclerSpecies.apply {
-            layoutManager = GridLayoutManager(requireContext(), span)
-            adapter = speciesAdapter
+        binding.recyclerViewTally.apply {
+            layoutManager = LinearLayoutManager(requireContext())
+            adapter = tallyAdapter
             setHasFixedSize(true)
-            itemAnimator = null
         }
 
-        // Observe flows
+        // Koppel Shared → Tally
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                // Logregels
                 launch {
-                    sharedVm.speechLogs.collect { logs ->
-                        logAdapter.submit(logs)
-                        recyclerLog.post {
-                            recyclerLog.scrollToPosition((logs.size - 1).coerceAtLeast(0))
-                        }
-                    }
-                }
-                // Tellers + display-namen.
-                // Bij elke wijziging in teller of naam-map, lijst opnieuw opbouwen.
-                launch {
-                    sharedVm.tallyMap.collect { map ->
-                        val items = sharedVm.selectedSpecies.value.map { s ->
-                            SpeciesTileAdapter.Tile(s, map[s] ?: 0)
-                        }
-                        speciesAdapter.submit(items)
+                    sharedVm.selectedCanonicals.collectLatest { canonicals ->
+                        val displayMap = sharedVm.displayNames.value
+                        tallyVm.setSelection(canonicals, displayMap)
                     }
                 }
                 launch {
-                    sharedVm.displayNames.collect {
-                        // display-namen gewijzigd → zelfde canonieke set opnieuw renderen
-                        val map = sharedVm.tallyMap.value
-                        val items = sharedVm.selectedSpecies.value.map { s ->
-                            SpeciesTileAdapter.Tile(s, map[s] ?: 0)
-                        }
-                        speciesAdapter.submit(items)
+                    sharedVm.displayNames.collectLatest { displayMap ->
+                        val canonicals = sharedVm.selectedCanonicals.value
+                        tallyVm.setSelection(canonicals, displayMap)
                     }
                 }
             }
         }
 
-        // Handmatige invoer (debug) → naar log
-        inputManual.setOnEditorActionListener { v, _, _ ->
-            val text = v.text?.toString()?.trim().orEmpty()
-            if (text.isNotEmpty()) {
-                sharedVm.appendLog("MANUAL: $text")
-                v.text = null
+        // Observe items → adapter
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    tallyVm.items.collectLatest { list ->
+                        tallyAdapter.submitList(list)
+                    }
+                }
             }
-            true
         }
 
-        // Listening-label optioneel zichtbaar maken zodra je spraak koppelt
-        tvListening.isVisible = false
+        // Knoppen
+        binding.buttonEndSession.setOnClickListener {
+            logAdapter.add("💾 Save: nog te koppelen aan export/resultaten.")
+            Toast.makeText(requireContext(), "Opslaan komt er aan…", Toast.LENGTH_SHORT).show()
+        }
+        binding.buttonAddSpecies.setOnClickListener {
+            logAdapter.add("➕ Add species: open Soortselectie (ga terug).")
+            requireActivity().onBackPressedDispatcher.onBackPressed()
+        }
+        binding.buttonExportObservations.setOnClickListener {
+            logAdapter.add("⤴️ Export: nog te koppelen aan export-logica.")
+            Toast.makeText(requireContext(), "Export komt er aan…", Toast.LENGTH_SHORT).show()
+        }
     }
 
-    // --- Simpele log adapter (gebaseerd op item_log_line.xml) ---
-    private class SpeechLogAdapter : RecyclerView.Adapter<SpeechLogAdapter.VH>() {
-        private val items = ArrayList<String>()
-
-        fun submit(list: List<String>) {
-            val diff = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
-                override fun getOldListSize() = items.size
-                override fun getNewListSize() = list.size
-                override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int) =
-                    oldItemPosition == newItemPosition
-                override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int) =
-                    items[oldItemPosition] == list[newItemPosition]
-            })
-            items.clear()
-            items.addAll(list)
-            diff.dispatchUpdatesTo(this)
-        }
-
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-            val v = LayoutInflater.from(parent.context)
-                .inflate(R.layout.item_log_line, parent, false)
-            return VH(v)
-        }
-
-        override fun onBindViewHolder(holder: VH, position: Int) {
-            holder.tv.text = items[position]
-        }
-
-        override fun getItemCount() = items.size
-
-        class VH(view: View) : RecyclerView.ViewHolder(view) {
-            val tv: TextView = view.findViewById(R.id.tvLogLine)
-        }
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _binding = null
     }
 }

@@ -24,11 +24,11 @@ import com.google.android.flexbox.JustifyContent
 import com.google.android.material.snackbar.Snackbar
 import com.yvesds.voicetally4.R
 import com.yvesds.voicetally4.databinding.FragmentSoortSelectieSchermBinding
-import com.yvesds.voicetally4.shared.SharedSpeciesViewModel
 import com.yvesds.voicetally4.ui.adapters.AliasTileAdapter
 import com.yvesds.voicetally4.ui.data.SoortAlias
 import com.yvesds.voicetally4.ui.domein.SoortSelectieViewModel
 import com.yvesds.voicetally4.ui.domein.SoortSelectieViewModel.UiState
+import com.yvesds.voicetally4.ui.shared.SharedSpeciesViewModel
 import com.yvesds.voicetally4.utils.io.DocumentsAccess
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
@@ -70,6 +70,7 @@ class SoortSelectieScherm : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        // Flexbox tiles
         val lm = FlexboxLayoutManager(requireContext()).apply {
             flexDirection = FlexDirection.ROW
             flexWrap = FlexWrap.WRAP
@@ -85,30 +86,36 @@ class SoortSelectieScherm : Fragment() {
             isSelected = { tileName -> viewModel.isSelected(tileName) },
             onToggle = { tileName ->
                 viewModel.toggleSelection(tileName)
+                // Tiles hertekenen zodat de "checked" state klopt
                 binding.recycler.post { adapter.notifyDataSetChanged() }
                 showSelectionHint()
             }
         )
         binding.recycler.adapter = adapter
 
+        // State observeren
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { viewModel.uiState.collect { renderState(it) } }
             }
         }
 
+        // Start load (CSV of binaire cache)
         viewModel.loadAliases()
 
+        // OK: schrijf selectie naar gedeelde VM en navigeer naar Tally
         binding.btnOk.setOnClickListener {
             val (chosenCanonical, displayMap) = buildSelectionAndDisplayMap()
             sharedVm.setSelectedSpecies(chosenCanonical)
             if (displayMap.isNotEmpty()) sharedVm.setDisplayNames(displayMap)
+
             val msg = if (chosenCanonical.isEmpty()) {
                 getString(R.string.chosen_species_none)
             } else {
                 getString(R.string.chosen_species_prefix, chosenCanonical.joinToString(", "))
             }
             Snackbar.make(binding.root, msg, Snackbar.LENGTH_SHORT).show()
+
             findNavController().navigate(R.id.action_soortSelectieScherm_to_tallyScherm)
         }
     }
@@ -117,6 +124,7 @@ class SoortSelectieScherm : Fragment() {
         when (state) {
             is UiState.Loading -> {
                 binding.emptyView.isVisible = false
+                binding.btnOk.isEnabled = false
             }
             is UiState.Success -> {
                 val tiles: List<SoortAlias> = state.items.map {
@@ -129,16 +137,17 @@ class SoortSelectieScherm : Fragment() {
                 }
                 adapter.submitList(tiles)
                 binding.emptyView.isVisible = tiles.isEmpty()
+                binding.btnOk.isEnabled = true
                 showSelectionHint()
             }
             is UiState.Error -> {
                 adapter.submitList(emptyList())
                 binding.emptyView.isVisible = true
+                binding.btnOk.isEnabled = false
+
                 val actionLabel = if (DocumentsAccess.hasPersistedUri(requireContext())) {
-                    // SAF is al gekoppeld -> gebruikershint
                     "Controleer aliasmapping.csv"
                 } else {
-                    // Vraag user om de map te koppelen (1x)
                     "Koppel Documents-map"
                 }
                 Snackbar.make(binding.root, state.message, Snackbar.LENGTH_LONG)
