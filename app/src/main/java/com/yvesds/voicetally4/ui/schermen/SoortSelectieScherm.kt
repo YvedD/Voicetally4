@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.DocumentsContract
+import android.util.DisplayMetrics
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -17,10 +18,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.fragment.findNavController
-import com.google.android.flexbox.FlexDirection
-import com.google.android.flexbox.FlexWrap
-import com.google.android.flexbox.FlexboxLayoutManager
-import com.google.android.flexbox.JustifyContent
+import androidx.recyclerview.widget.GridLayoutManager
 import com.google.android.material.snackbar.Snackbar
 import com.yvesds.voicetally4.R
 import com.yvesds.voicetally4.databinding.FragmentSoortSelectieSchermBinding
@@ -32,6 +30,7 @@ import com.yvesds.voicetally4.ui.shared.SharedSpeciesViewModel
 import com.yvesds.voicetally4.utils.io.DocumentsAccess
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
+import kotlin.math.max
 
 @AndroidEntryPoint
 class SoortSelectieScherm : Fragment() {
@@ -70,25 +69,24 @@ class SoortSelectieScherm : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Flexbox tiles
-        val lm = FlexboxLayoutManager(requireContext()).apply {
-            flexDirection = FlexDirection.ROW
-            flexWrap = FlexWrap.WRAP
-            justifyContent = JustifyContent.FLEX_START
-        }
+        // --- Snelle grid i.p.v. Flexbox: veel minder reflow bij first layout ---
+        val spanCount = calculateAutoSpanCount(
+            dm = resources.displayMetrics,
+            rootHorizontalPaddingPx = binding.root.paddingStart + binding.root.paddingEnd,
+            minTileWidthDp = 120f
+        )
+        val lm = GridLayoutManager(requireContext(), spanCount)
         binding.recycler.layoutManager = lm
         binding.recycler.setHasFixedSize(true)
         binding.recycler.itemAnimator = null
-        binding.recycler.setItemViewCacheSize(64)
-        binding.recycler.recycledViewPool.setMaxRecycledViews(0, 128)
+        binding.recycler.setItemViewCacheSize(128)
 
         adapter = AliasTileAdapter(
             isSelected = { tileName -> viewModel.isSelected(tileName) },
             onToggle = { tileName ->
                 viewModel.toggleSelection(tileName)
-                // Tiles hertekenen zodat de "checked" state klopt
-                binding.recycler.post { adapter.notifyDataSetChanged() }
-                showSelectionHint()
+                // Geen notifyDataSetChanged(); de ViewHolder doet al notifyItemChanged(payload)
+                updateSelectionStatus()
             }
         )
         binding.recycler.adapter = adapter
@@ -108,16 +106,12 @@ class SoortSelectieScherm : Fragment() {
             val (chosenCanonical, displayMap) = buildSelectionAndDisplayMap()
             sharedVm.setSelectedSpecies(chosenCanonical)
             if (displayMap.isNotEmpty()) sharedVm.setDisplayNames(displayMap)
-
-            val msg = if (chosenCanonical.isEmpty()) {
-                getString(R.string.chosen_species_none)
-            } else {
-                getString(R.string.chosen_species_prefix, chosenCanonical.joinToString(", "))
-            }
-            Snackbar.make(binding.root, msg, Snackbar.LENGTH_SHORT).show()
-
+            // Geen Snackbar hier — we houden de overgang strak en snel
             findNavController().navigate(R.id.action_soortSelectieScherm_to_tallyScherm)
         }
+
+        // Init statusregel
+        updateSelectionStatus()
     }
 
     private fun renderState(state: UiState) {
@@ -138,7 +132,7 @@ class SoortSelectieScherm : Fragment() {
                 adapter.submitList(tiles)
                 binding.emptyView.isVisible = tiles.isEmpty()
                 binding.btnOk.isEnabled = true
-                showSelectionHint()
+                updateSelectionStatus()
             }
             is UiState.Error -> {
                 adapter.submitList(emptyList())
@@ -173,24 +167,36 @@ class SoortSelectieScherm : Fragment() {
     private fun buildSelectionAndDisplayMap(): Pair<List<String>, Map<String, String>> {
         val state = viewModel.uiState.value
         if (state !is UiState.Success) return emptyList<String>() to emptyMap()
+
         val selected = state.items.filter { viewModel.isSelected(it.tileName) }
         val chosenCanonical = selected.map { it.canonical }
         val displayMap = selected.associate { it.canonical to it.tileName }
         return chosenCanonical to displayMap
     }
 
-    private fun showSelectionHint() {
+    private fun updateSelectionStatus() {
         val (chosenCanonical, _) = buildSelectionAndDisplayMap()
         val msg = if (chosenCanonical.isEmpty()) {
             getString(R.string.chosen_species_none)
         } else {
             getString(R.string.chosen_species_prefix, chosenCanonical.joinToString(", "))
         }
-        Snackbar.make(binding.root, msg, Snackbar.LENGTH_SHORT).show()
+        binding.selectionStatus.text = msg
     }
 
     override fun onDestroyView() {
         super.onDestroyView()
         _binding = null
+    }
+
+    private fun calculateAutoSpanCount(
+        dm: DisplayMetrics,
+        rootHorizontalPaddingPx: Int,
+        minTileWidthDp: Float
+    ): Int {
+        val minTilePx = (minTileWidthDp * dm.density).toInt().coerceAtLeast(1)
+        val screenPx = dm.widthPixels - rootHorizontalPaddingPx
+        val span = max(1, screenPx / minTilePx)
+        return span
     }
 }

@@ -91,6 +91,5 @@
             android:layout_height="173dp"
             android:layout_marginHorizontal="16dp"
             android:text="Deze versie van VoiceTally ondersteunt uploads naar de server van trektellen.nl. Meerdere aanpassingen volgen nog" />
-
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

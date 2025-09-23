@@ -19,7 +19,7 @@
         android:id="@+id/opstartScherm"
         android:name="com.yvesds.voicetally4.ui.schermen.StartScherm"
         android:label="Opstart"
-        tools:layout="@layout/fragment_opstart_scherm">
+        tools:layout="@layout/fragment_start_scherm">
         <action
             android:id="@+id/action_opstartScherm_to_metadataScherm"
             app:destination="@id/metadataScherm" />

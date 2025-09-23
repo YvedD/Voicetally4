@@ -35,6 +35,15 @@
             android:text="@string/ok" />
     </LinearLayout>
 
+    <!-- Statusregel i.p.v. Snackbars bij elke toggle (performant & rustig) -->
+    <com.google.android.material.textview.MaterialTextView
+        android:id="@+id/selectionStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingBottom="8dp"
+        android:text="@string/chosen_species_none"
+        android:textAppearance="@style/TextAppearance.Material3.BodySmall" />
+
     <!-- Supersnelle scrollbare tiles (RecyclerView) -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recycler"
