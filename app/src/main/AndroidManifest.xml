@@ -30,11 +30,10 @@
         android:theme="@style/Theme.VoiceTally4"
         android:enableOnBackInvokedCallback="true">
 
-
         <activity
             android:name=".StartActiviteit"
             android:exported="true"
-            android:theme="@style/Theme.VoiceTally4">
+            android:theme="@style/Theme.VoiceTally4.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>

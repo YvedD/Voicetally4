@@ -22,6 +22,7 @@
     <string name="perm_action_allow">Toestaan</string>
 
     <!-- Startscherm -->
+    <string name="loading_species_msg">Soorten werden ingeladen…</string>
     <string name="start_telling">Start telling</string>
     <string name="tellingen">Tellingen</string>
     <string name="instellingen">Instellingen</string>
