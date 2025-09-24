@@ -3,6 +3,8 @@ package com.yvesds.voicetally4.ui.schermen
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.content.res.Resources
+import android.graphics.Color
 import android.location.Location
 import android.location.LocationManager
 import android.os.Bundle
@@ -159,48 +161,143 @@ class MetadataScherm : Fragment() {
         binding.etTijd.setOnClickListener { openTimeSpinnerDialog() }
     }
 
+// --- tijd: openTimeSpinnerDialog() en helpers (DONKER BG, TITEL/KNOPPEN LICHTBLAUW, PICKER-TEXT WIT) ---
+
     private fun openTimeSpinnerDialog() {
+        val accentBlue = ContextCompat.getColor(requireContext(), R.color.vt4_outline) // #08C7E4
         val current = try {
             LocalTime.parse(selectedTimeHHmm, timeFmt)
         } catch (_: Exception) {
             LocalTime.now()
         }
 
+        // Container met donkere achtergrond
         val container = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(16, 8, 16, 8)
+            setPadding(24, 16, 24, 16)
+            setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.vt4_black))
+            gravity = android.view.Gravity.CENTER_HORIZONTAL
+        }
+
+        // Labels (wit)
+        val lblHour = TextView(requireContext()).apply {
+            text = "Uren"
+            setTextColor(Color.WHITE)
+            setPadding(0, 0, 0, 8)
+        }
+        val lblMinute = TextView(requireContext()).apply {
+            text = "Minuten"
+            setTextColor(Color.WHITE)
+            setPadding(0, 0, 0, 8)
+        }
+
+        // Hour kolom
+        val hourCol = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 16, 0)
         }
         val hourPicker = NumberPicker(requireContext()).apply {
             minValue = 0; maxValue = 23
             value = current.hour
             wrapSelectorWheel = true
             setFormatter { String.format(Locale.getDefault(), "%02d", it) }
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        hourCol.addView(lblHour)
+        hourCol.addView(hourPicker)
+
+        // Minute kolom
+        val minuteCol = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16, 0, 0, 0)
         }
         val minutePicker = NumberPicker(requireContext()).apply {
             minValue = 0; maxValue = 59
             value = current.minute
             wrapSelectorWheel = true
             setFormatter { String.format(Locale.getDefault(), "%02d", it) }
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
         }
-        minutePicker.setOnValueChangedListener { _, oldVal, newVal ->
-            if (oldVal == 59 && newVal == 0) hourPicker.value = (hourPicker.value + 1) % 24
-            else if (oldVal == 0 && newVal == 59) hourPicker.value = (hourPicker.value + 23) % 24
-        }
-        container.addView(hourPicker)
-        container.addView(minutePicker)
+        minuteCol.addView(lblMinute)
+        minuteCol.addView(minutePicker)
 
-        MaterialAlertDialogBuilder(requireContext())
+        // Hour<->Minute “overlopen”
+        minutePicker.setOnValueChangedListener { _, oldVal, newVal ->
+            if (oldVal == 59 && newVal == 0) {
+                hourPicker.value = (hourPicker.value + 1) % 24
+            } else if (oldVal == 0 && newVal == 59) {
+                hourPicker.value = (hourPicker.value + 23) % 24
+            }
+        }
+
+        container.addView(hourCol)
+        container.addView(minuteCol)
+
+        val dlg = MaterialAlertDialogBuilder(requireContext())
             .setTitle(getString(R.string.meta_tijd))
             .setView(container)
             .setPositiveButton(android.R.string.ok) { _, _ ->
-                selectedTimeHHmm = String.format(Locale.getDefault(), "%02d:%02d", hourPicker.value, minutePicker.value)
+                selectedTimeHHmm = String.format(
+                    Locale.getDefault(), "%02d:%02d", hourPicker.value, minutePicker.value
+                )
                 _binding?.etTijd?.setText(selectedTimeHHmm)
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create()
+
+        dlg.setOnShowListener {
+            // Buttons lichtblauw
+            dlg.getButton(android.app.AlertDialog.BUTTON_POSITIVE)?.setTextColor(accentBlue)
+            dlg.getButton(android.app.AlertDialog.BUTTON_NEGATIVE)?.setTextColor(accentBlue)
+
+            // Titeltekst lichtblauw
+            dlg.findViewById<TextView>(com.google.android.material.R.id.alertTitle)
+                ?.setTextColor(accentBlue)
+
+            // NumberPickers en labels wit
+            setNumberPickerTextColor(hourPicker, Color.WHITE)
+            setNumberPickerTextColor(minutePicker, Color.WHITE)
+            lblHour.setTextColor(Color.WHITE)
+            lblMinute.setTextColor(Color.WHITE)
+        }
+
+        dlg.show()
     }
+
+    /** Kleurt de centrale NumberPicker-tekst (EditText) veilig, zonder reflectie (API 35+ proof). */
+    private fun setNumberPickerTextColor(picker: NumberPicker, color: Int) {
+        // 1) Probeer het standaard child-EditText te vinden en te kleuren
+        for (i in 0 until picker.childCount) {
+            val child = picker.getChildAt(i)
+            if (child is TextView) {
+                try {
+                    child.setTextColor(color)
+                    child.paint.isFakeBoldText = true
+                    child.invalidate()
+                } catch (_: Exception) { /* ignore */ }
+            }
+        }
+
+        // 2) Extra poging via resource-id van de interne EditText (sommige Android builds)
+        try {
+            val id = Resources.getSystem().getIdentifier("numberpicker_input", "id", "android")
+            val edit = if (id != 0) picker.findViewById<TextView>(id) else null
+            edit?.let {
+                it.setTextColor(color)
+                it.paint.isFakeBoldText = true
+                it.invalidate()
+            }
+        } catch (_: Exception) {
+            // Best effort; geen reflectie gebruiken (API 35+).
+        }
+    }
+
     // endregion
 
     // region Telpost
