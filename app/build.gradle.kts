@@ -101,10 +101,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
-    // encrypted credentials
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 }
-
 
 /**
  * Alleen de Hilt gegenereerde Java-compiletaken (hiltJavaCompile*) dempen we
