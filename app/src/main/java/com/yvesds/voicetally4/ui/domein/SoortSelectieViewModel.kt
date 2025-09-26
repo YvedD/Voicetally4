@@ -17,7 +17,8 @@ import kotlinx.coroutines.withContext
 
 @HiltViewModel
 class SoortSelectieViewModel @Inject constructor(
-    @ApplicationContext private val appContext: Context
+    @param:ApplicationContext // ← behoud huidig gedrag; geen toekomstige target-warnings
+    private val appContext: Context
 ) : ViewModel() {
 
     sealed class UiState {
@@ -37,9 +38,10 @@ class SoortSelectieViewModel @Inject constructor(
     val uiState: StateFlow<UiState> = _uiState
 
     private val selectedTiles = LinkedHashSet<String>() // keys = tileName
-
     fun isSelected(tileName: String): Boolean = selectedTiles.contains(tileName)
-    fun toggleSelection(tileName: String) { if (!selectedTiles.add(tileName)) selectedTiles.remove(tileName) }
+    fun toggleSelection(tileName: String) {
+        if (!selectedTiles.add(tileName)) selectedTiles.remove(tileName)
+    }
 
     private var started = false
 

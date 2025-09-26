@@ -21,8 +21,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.updateLayoutParams
-import androidx.core.widget.doOnTextChanged
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
@@ -34,6 +32,7 @@ import com.google.android.material.textfield.TextInputLayout
 import com.yvesds.voicetally4.R
 import com.yvesds.voicetally4.databinding.FragmentMetadataSchermBinding
 import com.yvesds.voicetally4.ui.data.MetadataForm
+import com.yvesds.voicetally4.utils.io.CodesJsonReader
 import com.yvesds.voicetally4.utils.io.StorageUtils
 import com.yvesds.voicetally4.utils.net.CredentialsStore
 import com.yvesds.voicetally4.utils.net.TrektellenApi
@@ -50,15 +49,12 @@ import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import java.util.UUID
 
 /**
  * MetadataScherm:
- * - Registreert bij openen 1x het tijdstip, gebruikt voor begintijd/eindtijd (epoch seconds).
- * - 'Verder' -> counts_save met alle metadata, nrec/nsoort = "0", data = [].
- * - Response wordt opgeslagen naar /Documents/VoiceTally4/serverdata/counts_save_last.json
- * - Basic Auth met CredentialsStore (dialoog als credentials ontbreken).
- * - Geen locatie-type spinner meer.
+ * - JSON-first spinner-waarden via CodesJsonReader voor typetelling_trek / wind / neerslag.
+ * - Vrije telling: telpostCode == "0" → géén upload (bestaande logica blijft).
+ * - Overige gedrag ongewijzigd.
  */
 class MetadataScherm : Fragment() {
 
@@ -67,16 +63,17 @@ class MetadataScherm : Fragment() {
 
     private lateinit var weatherManager: WeatherManager
 
-    // Tijdstempels
+    // Tijd
     private var selectedDate: LocalDate = LocalDate.now()
-    private var selectedTimeHHmm: String = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
-    private var screenEnterEpochSec: Long = 0L // exact moment dat gebruiker dit scherm opent
+    private var selectedTimeHHmm: String =
+        LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
+    private var screenEnterEpochSec: Long = 0L
 
-    // Prefs: onthoud laatste telpost
+    // Prefs
     private val prefsName = "metadata_prefs"
     private val keyLastTelpostCode = "last_telpost_code"
 
-    // Upload prefs: bewaar laatst ontvangen IDs
+    // Upload prefs
     private val uploadPrefs = "upload_prefs"
     private val keyOnlineId = "last_onlineid"
     private val keyTellingId = "last_tellingid"
@@ -84,15 +81,13 @@ class MetadataScherm : Fragment() {
     // Formatters
     private val dateFmt = DateTimeFormatter.ISO_LOCAL_DATE
     private val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
-    private val uploadTsFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
 
-    // Runtime permission launcher
+    // Perm launcher
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
         val granted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
                 result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        // Guard: alleen uitvoeren als de Fragment nog zichtbaar/attached is en de view bestaat
         if (granted && isAdded && _binding != null) {
             updateWeatherFromDeviceLocation()
         }
@@ -111,7 +106,6 @@ class MetadataScherm : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Registreer exact moment van binnenkomst
         screenEnterEpochSec = Instant.now().epochSecond
 
         applySystemBarInsets()
@@ -119,17 +113,39 @@ class MetadataScherm : Fragment() {
         setupTimePickerDialog()
         setupTelpostSpinner()
         setupTellersField()
-        setupWeatherSpinners()
-        hookWeatherButton()
-        setupTypeTellingSpinner()
+
+        // JSON-first laad + UI vullen
+        viewLifecycleOwner.lifecycleScope.launch {
+            withContext(Dispatchers.IO) { CodesJsonReader.load(requireContext()) }
+            setupWeatherSpinnersJsonFirst()
+            hookWeatherButton()
+            setupTypeTellingSpinnerJsonFirst()
+        }
+        android.util.Log.d("CodesJsonReader", CodesJsonReader.debugSummary("typetelling_trek"))
+        android.util.Log.d("CodesJsonReader", CodesJsonReader.debugSummary("wind"))
+        android.util.Log.d("CodesJsonReader", CodesJsonReader.debugSummary("neerslag"))
+
         setupBottomBar()
     }
 
     private fun applySystemBarInsets() {
         ViewCompat.setOnApplyWindowInsetsListener(binding.rootConstraint) { _, insets ->
             val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            binding.bottomBar.updateLayoutParams<android.view.ViewGroup.MarginLayoutParams> {
-                bottomMargin = sys.bottom
+
+            // Veilig margins aanpassen indien mogelijk; anders padding-fallback
+            val lp = binding.bottomBar.layoutParams
+            if (lp is ViewGroup.MarginLayoutParams) {
+                lp.bottomMargin = sys.bottom
+                binding.bottomBar.layoutParams = lp
+            } else {
+                // Fallback: extra bottom padding toevoegen
+                val p = binding.bottomBar.paddingBottom
+                binding.bottomBar.setPadding(
+                    binding.bottomBar.paddingLeft,
+                    binding.bottomBar.paddingTop,
+                    binding.bottomBar.paddingRight,
+                    p + sys.bottom
+                )
             }
             insets
         }
@@ -138,40 +154,41 @@ class MetadataScherm : Fragment() {
     // region Datum
     private fun setupDateField() {
         binding.etDatum.setText(selectedDate.format(dateFmt))
+
         val openDatePicker: (View) -> Unit = {
-            val utcMidnight = selectedDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            val utcMidnight =
+                selectedDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
             val picker = MaterialDatePicker.Builder.datePicker()
                 .setTitleText(getString(R.string.meta_datum))
                 .setSelection(utcMidnight)
                 .build()
             picker.addOnPositiveButtonClickListener { millis ->
-                val local = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
+                val local =
+                    Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
                 selectedDate = local
                 _binding?.etDatum?.setText(selectedDate.format(dateFmt))
             }
             picker.show(parentFragmentManager, "datePicker")
         }
+
         binding.etDatum.setOnClickListener(openDatePicker)
     }
     // endregion
 
-    // region Tijd (custom dialog met 2 pickers)
+    // region Tijd (custom dialog)
     private fun setupTimePickerDialog() {
         binding.etTijd.setText(selectedTimeHHmm)
         binding.etTijd.setOnClickListener { openTimeSpinnerDialog() }
     }
 
-// --- tijd: openTimeSpinnerDialog() en helpers (DONKER BG, TITEL/KNOPPEN LICHTBLAUW, PICKER-TEXT WIT) ---
-
     private fun openTimeSpinnerDialog() {
-        val accentBlue = ContextCompat.getColor(requireContext(), R.color.vt4_outline) // #08C7E4
+        val accentBlue = ContextCompat.getColor(requireContext(), R.color.vt4_outline)
         val current = try {
             LocalTime.parse(selectedTimeHHmm, timeFmt)
         } catch (_: Exception) {
             LocalTime.now()
         }
 
-        // Container met donkere achtergrond
         val container = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(24, 16, 24, 16)
@@ -179,7 +196,6 @@ class MetadataScherm : Fragment() {
             gravity = android.view.Gravity.CENTER_HORIZONTAL
         }
 
-        // Labels (wit)
         val lblHour = TextView(requireContext()).apply {
             text = "Uren"
             setTextColor(Color.WHITE)
@@ -191,7 +207,6 @@ class MetadataScherm : Fragment() {
             setPadding(0, 0, 0, 8)
         }
 
-        // Hour kolom
         val hourCol = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 0, 16, 0)
@@ -202,14 +217,12 @@ class MetadataScherm : Fragment() {
             wrapSelectorWheel = true
             setFormatter { String.format(Locale.getDefault(), "%02d", it) }
             layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
             )
         }
         hourCol.addView(lblHour)
         hourCol.addView(hourPicker)
 
-        // Minute kolom
         val minuteCol = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(16, 0, 0, 0)
@@ -220,14 +233,13 @@ class MetadataScherm : Fragment() {
             wrapSelectorWheel = true
             setFormatter { String.format(Locale.getDefault(), "%02d", it) }
             layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
             )
         }
         minuteCol.addView(lblMinute)
         minuteCol.addView(minutePicker)
 
-        // Hour<->Minute “overlopen”
+        // Hour<->Minute overlopen
         minutePicker.setOnValueChangedListener { _, oldVal, newVal ->
             if (oldVal == 59 && newVal == 0) {
                 hourPicker.value = (hourPicker.value + 1) % 24
@@ -243,36 +255,26 @@ class MetadataScherm : Fragment() {
             .setTitle(getString(R.string.meta_tijd))
             .setView(container)
             .setPositiveButton(android.R.string.ok) { _, _ ->
-                selectedTimeHHmm = String.format(
-                    Locale.getDefault(), "%02d:%02d", hourPicker.value, minutePicker.value
-                )
+                selectedTimeHHmm =
+                    String.format(Locale.getDefault(), "%02d:%02d", hourPicker.value, minutePicker.value)
                 _binding?.etTijd?.setText(selectedTimeHHmm)
             }
             .setNegativeButton(android.R.string.cancel, null)
             .create()
 
         dlg.setOnShowListener {
-            // Buttons lichtblauw
             dlg.getButton(android.app.AlertDialog.BUTTON_POSITIVE)?.setTextColor(accentBlue)
             dlg.getButton(android.app.AlertDialog.BUTTON_NEGATIVE)?.setTextColor(accentBlue)
-
-            // Titeltekst lichtblauw
-            dlg.findViewById<TextView>(com.google.android.material.R.id.alertTitle)
-                ?.setTextColor(accentBlue)
-
-            // NumberPickers en labels wit
+            dlg.findViewById<TextView>(com.google.android.material.R.id.alertTitle)?.setTextColor(accentBlue)
             setNumberPickerTextColor(hourPicker, Color.WHITE)
             setNumberPickerTextColor(minutePicker, Color.WHITE)
             lblHour.setTextColor(Color.WHITE)
             lblMinute.setTextColor(Color.WHITE)
         }
-
         dlg.show()
     }
 
-    /** Kleurt de centrale NumberPicker-tekst (EditText) veilig, zonder reflectie (API 35+ proof). */
     private fun setNumberPickerTextColor(picker: NumberPicker, color: Int) {
-        // 1) Probeer het standaard child-EditText te vinden en te kleuren
         for (i in 0 until picker.childCount) {
             val child = picker.getChildAt(i)
             if (child is TextView) {
@@ -280,11 +282,9 @@ class MetadataScherm : Fragment() {
                     child.setTextColor(color)
                     child.paint.isFakeBoldText = true
                     child.invalidate()
-                } catch (_: Exception) { /* ignore */ }
+                } catch (_: Exception) { }
             }
         }
-
-        // 2) Extra poging via resource-id van de interne EditText (sommige Android builds)
         try {
             val id = Resources.getSystem().getIdentifier("numberpicker_input", "id", "android")
             val edit = if (id != 0) picker.findViewById<TextView>(id) else null
@@ -293,11 +293,8 @@ class MetadataScherm : Fragment() {
                 it.paint.isFakeBoldText = true
                 it.invalidate()
             }
-        } catch (_: Exception) {
-            // Best effort; geen reflectie gebruiken (API 35+).
-        }
+        } catch (_: Exception) { }
     }
-
     // endregion
 
     // region Telpost
@@ -310,7 +307,8 @@ class MetadataScherm : Fragment() {
         val prefs = requireContext().getSharedPreferences(prefsName, Context.MODE_PRIVATE)
         val savedCode = prefs.getString(keyLastTelpostCode, null)
 
-        val defaultIndex = labels.indexOf("VoiceTally Testsite").let { if (it >= 0) it else labels.lastIndex }
+        val defaultIndex =
+            labels.indexOf("VoiceTally Testsite").let { if (it >= 0) it else labels.lastIndex }
         val startIndex = if (savedCode != null) {
             values.indexOf(savedCode).takeIf { it >= 0 } ?: defaultIndex
         } else defaultIndex
@@ -327,31 +325,63 @@ class MetadataScherm : Fragment() {
         if (binding.etTellers.text.isNullOrBlank()) {
             binding.etTellers.setText("Yves De Saedeleer")
         }
-        binding.etTellers.doOnTextChanged { _, _, _, _ -> }
     }
     // endregion
 
-    // region Weer - spinners + knop
-    private fun setupWeatherSpinners() {
-        binding.acWindrichting.setAdapter(
-            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, resources.getStringArray(R.array.vt4_windrichting_opties))
-        )
+    // region Weer (JSON-first voor wind & neerslag)
+    private fun setupWeatherSpinnersJsonFirst() {
+        // Windrichting
+        val windLabels = CodesJsonReader.getLabels("wind")
+        val windAdapter = if (windLabels.isNotEmpty())
+            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, windLabels)
+        else
+            ArrayAdapter(
+                requireContext(),
+                android.R.layout.simple_list_item_1,
+                resources.getStringArray(R.array.vt4_windrichting_opties)
+            )
+        binding.acWindrichting.setAdapter(windAdapter)
+
+        // Bewolking (arrays.xml)
         binding.acBewolking.setAdapter(
-            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, resources.getStringArray(R.array.vt4_bewolking_achtsten))
+            ArrayAdapter(
+                requireContext(),
+                android.R.layout.simple_list_item_1,
+                resources.getStringArray(R.array.vt4_bewolking_achtsten)
+            )
         )
-        binding.acNeerslag.setAdapter(
-            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, resources.getStringArray(R.array.vt4_neerslag_opties))
-        )
+
+        // Neerslag
+        val rainLabels = CodesJsonReader.getLabels("neerslag")
+        val rainAdapter = if (rainLabels.isNotEmpty())
+            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, rainLabels)
+        else
+            ArrayAdapter(
+                requireContext(),
+                android.R.layout.simple_list_item_1,
+                resources.getStringArray(R.array.vt4_neerslag_opties)
+            )
+        binding.acNeerslag.setAdapter(rainAdapter)
+
+        // Windkracht (arrays.xml)
         binding.acWindkracht.setAdapter(
-            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, resources.getStringArray(R.array.vt4_windkracht_beaufort))
+            ArrayAdapter(
+                requireContext(),
+                android.R.layout.simple_list_item_1,
+                resources.getStringArray(R.array.vt4_windkracht_beaufort)
+            )
         )
     }
 
     private fun hookWeatherButton() {
         binding.btnWeerIcon.setOnClickListener {
             val ctx = context ?: return@setOnClickListener
-            val fine = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-            val coarse = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            val fine = ContextCompat.checkSelfPermission(
+                ctx, Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+            val coarse = ContextCompat.checkSelfPermission(
+                ctx, Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
             if (fine || coarse) {
                 updateWeatherFromDeviceLocation()
             } else {
@@ -369,7 +399,6 @@ class MetadataScherm : Fragment() {
         val ctx = context ?: return
         val loc = getBestLastKnownLocation(ctx) ?: return
 
-        // Gebruik de Fragment lifecycleScope (niet viewLifecycleOwner), en schakel zelf naar Main voor UI
         lifecycleScope.launch(Dispatchers.IO) {
             val w = weatherManager.fetchCurrentWeather(loc.latitude, loc.longitude)
             withContext(Dispatchers.Main) {
@@ -384,8 +413,6 @@ class MetadataScherm : Fragment() {
                     val octas = weatherManager.toOctas(w.cloudcover)
                     b.acBewolking.setText("$octas/8", false)
                     b.acNeerslag.setText(weatherManager.mapWeatherCodeToNeerslagOption(w.weathercode), false)
-
-                    // Zicht in meters (geen afronding naar km)
                     if (w.visibility != 0) {
                         b.etZicht.setText(w.visibility.toString())
                     }
@@ -411,7 +438,7 @@ class MetadataScherm : Fragment() {
             try {
                 val l = lm.getLastKnownLocation(p) ?: continue
                 if (best == null || (l.time > best!!.time)) best = l
-            } catch (_: SecurityException) {}
+            } catch (_: SecurityException) { }
         }
         return best
     }
@@ -424,36 +451,41 @@ class MetadataScherm : Fragment() {
     }
     // endregion
 
-    // region Type telling
-    private fun setupTypeTellingSpinner() {
-        val labels = listOf(
-            "alle soorten",
-            "zeetrek",
-            "Ooievaars en roofvogels",
-            "landtrek op kusttelpost"
-        )
-        binding.acTypeTelling.setAdapter(
+    // region Type telling (JSON-first)
+    private fun setupTypeTellingSpinnerJsonFirst() {
+        val labels = CodesJsonReader.getLabels("typetelling_trek")
+        val adapter = if (labels.isNotEmpty())
             ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, labels)
-        )
-        binding.acTypeTelling.setText("alle soorten", false)
+        else
+            ArrayAdapter(
+                requireContext(),
+                android.R.layout.simple_list_item_1,
+                resources.getStringArray(R.array.vt4_type_telling_opties)
+            )
+
+        binding.acTypeTelling.setAdapter(adapter)
+
+        val defaultLabel = if (labels.isNotEmpty()) {
+            labels.firstOrNull { it.equals("alle soorten", ignoreCase = true) } ?: labels.first()
+        } else {
+            "alle soorten"
+        }
+        binding.acTypeTelling.setText(defaultLabel, false)
     }
     // endregion
 
-    // region Onderste knoppen
+    // region Onderaan (upload)
     private fun setupBottomBar() {
-        binding.btnAnnuleer.setOnClickListener {
-            findNavController().popBackStack()
-        }
-
+        binding.btnAnnuleer.setOnClickListener { findNavController().popBackStack() }
         binding.btnVerder.setOnClickListener {
             ensureCredentialsThen {
                 val b = _binding ?: return@ensureCredentialsThen
                 val form = collectForm()
 
                 lifecycleScope.launch(Dispatchers.IO) {
-                    // Bouw payload via de snelle builder (strings voor numerieke velden), data=[]
                     val beginSec = (form.datumEpochMillis / 1000L)
                     val eindSec = beginSec
+
                     val payload = CountsPayloadBuilder.buildStart(
                         form = form,
                         beginSec = beginSec,
@@ -464,7 +496,6 @@ class MetadataScherm : Fragment() {
 
                     val response = TrektellenApi.postCountsSaveBasicAuthAsync(requireContext(), payload)
 
-                    // altijd body naar bestand schrijven (debug/trace, en om "alles te bewaren")
                     val savedPath = try {
                         StorageUtils.saveStringToPublicDocuments(
                             context = requireContext(),
@@ -472,22 +503,19 @@ class MetadataScherm : Fragment() {
                             fileName = "counts_save_last.json",
                             content = response.body
                         )
-                        savedPathToHuman(
-                            StorageUtils.getPublicAppDir(requireContext(), "serverdata").absolutePath,
-                            "counts_save_last.json"
-                        )
+                        "${StorageUtils.getPublicAppDir(requireContext(), "serverdata").absolutePath}/counts_save_last.json"
                     } catch (_: Throwable) {
                         null
                     }
 
                     withContext(Dispatchers.Main) {
-                        val bind = _binding
-                        if (bind == null || !isAdded) return@withContext
-
+                        val bind = _binding ?: return@withContext
                         if (!response.ok) {
                             showErrorDialog(
                                 "Upload mislukt",
-                                "Status ${response.httpCode}\n${response.body.take(4000)}\n\n${savedPath?.let { "Opgeslagen als: $it" } ?: ""}"
+                                "Status ${response.httpCode}\n${response.body.take(4000)}\n\n${
+                                    savedPath?.let { "Opgeslagen als: $it" } ?: ""
+                                }"
                             )
                         } else {
                             val body = response.body
@@ -520,9 +548,7 @@ class MetadataScherm : Fragment() {
             }
         }
     }
-    // endregion
 
-    /** Toon 1x login-dialoog als credentials ontbreken, sla op, en voer dan [action] uit. */
     private fun ensureCredentialsThen(action: () -> Unit) {
         val have = CredentialsStore.get(requireContext())
         if (have != null) {
@@ -530,7 +556,6 @@ class MetadataScherm : Fragment() {
             return
         }
 
-        // Inline login UI
         val container = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(24, 8, 24, 0)
@@ -577,25 +602,24 @@ class MetadataScherm : Fragment() {
             .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
+    // endregion
 
     // region Form verzamelen
     private fun collectForm(): MetadataForm {
         val hhmm = binding.etTijd.text?.toString()?.takeIf { it.matches(Regex("\\d{2}:\\d{2}")) } ?: selectedTimeHHmm
         val localTime = LocalTime.parse(hhmm, timeFmt)
-        val epochMillis = selectedDate.atTime(localTime).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val epochMillis =
+            selectedDate.atTime(localTime).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
 
-        // Telpost
         val labels = resources.getStringArray(R.array.vt4_telpost_labels)
         val values = resources.getStringArray(R.array.vt4_telpost_values)
         val currentTelpostLabel = binding.acTelpost.text?.toString().orEmpty()
         val telpostIndex = labels.indexOf(currentTelpostLabel).takeIf { it >= 0 } ?: labels.lastIndex
         val currentTelpostCode = values[telpostIndex]
 
-        // Tellers
         val tellerNaam = binding.etTellers.text?.toString()?.trim().orEmpty()
         val tellerId = "3533" // voorlopig vast
 
-        // Weer
         val windrichting = binding.acWindrichting.text?.toString()?.trim().orEmpty()
         val temperatuurC = binding.etTemperatuur.text?.toString()?.replace(',', '.')?.toDoubleOrNull()
         val bewolking = binding.acBewolking.text?.toString()?.trim().orEmpty()
@@ -617,7 +641,7 @@ class MetadataScherm : Fragment() {
             temperatuurC = temperatuurC,
             bewolkingAchtsten = bewolking,
             neerslag = neerslag,
-            zichtKm = zichtMeters, // in meters, naam historisch
+            zichtKm = zichtMeters,
             windkrachtBft = windkrachtBft,
             luchtdrukHpa = luchtdrukHpa,
             opmerkingen = binding.etOpmerkingen.text?.toString()?.trim().orEmpty()
@@ -625,8 +649,7 @@ class MetadataScherm : Fragment() {
     }
     // endregion
 
-    // region Response parsing & UI helpers
-    /** Zoek onlineid/tellingid in verschillende JSON varianten. */
+    // region Response parsing & dialogs
     private fun parseIdsFromCountsSaveResponse(body: String): Pair<String?, String?> {
         return try {
             val root = JSONObject(body)
@@ -668,8 +691,6 @@ class MetadataScherm : Fragment() {
             .setPositiveButton(android.R.string.ok, null)
             .show()
     }
-
-    private fun savedPathToHuman(dirPath: String, fileName: String): String = "$dirPath/$fileName"
     // endregion
 
     override fun onDestroyView() {

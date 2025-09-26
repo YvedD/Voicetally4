@@ -6,6 +6,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("com.google.dagger.hilt.android")
     id("com.google.devtools.ksp")
+    id("org.jetbrains.kotlin.plugin.serialization")
+    // ▼ nodig voor @Parcelize
+    id("kotlin-parcelize")
 }
 
 android {
@@ -68,6 +71,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
+    // kotlinx.serialization JSON runtime
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+
     // Material 3
     implementation("com.google.android.material:material:1.13.0")
 
@@ -76,11 +82,11 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.activity:activity-ktx:1.11.0")
     implementation("androidx.fragment:fragment-ktx:1.8.8")
-    implementation("androidx.recyclerview:recyclerview:1.3.2") // ← nodig voor RecyclerView
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.coordinatorlayout:coordinatorlayout:1.3.0")
 
-    // FlexboxLayoutManager voor “wrapping” tiles
-    implementation("com.google.android.flexbox:flexbox:3.0.0") // ← nodig voor Flexbox
+    // Flexbox
+    implementation("com.google.android.flexbox:flexbox:3.0.0")
 
     // SAF DocumentFile
     implementation("androidx.documentfile:documentfile:1.1.0")
@@ -95,8 +101,10 @@ dependencies {
     // Hilt + KSP
     implementation("com.google.dagger:hilt-android:2.57.1")
     ksp("com.google.dagger:hilt-compiler:2.57.1")
+
     // SplashScreen
     implementation("androidx.core:core-splashscreen:1.0.1")
+
     // Test
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
@@ -105,8 +113,7 @@ dependencies {
 
 /**
  * Alleen de Hilt gegenereerde Java-compiletaken (hiltJavaCompile*) dempen we
- * voor 'deprecation' zodat de build-output schoon blijft. Jouw eigen code
- * houdt waarschuwingen gewoon aan.
+ * voor 'deprecation' zodat de build-output schoon blijft.
  */
 tasks.matching { it.name.startsWith("hiltJavaCompile") && it is JavaCompile }
     .configureEach {
