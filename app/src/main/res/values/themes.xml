@@ -1,35 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Altijd donkere, consistente thema-instellingen (geen DayNight). -->
-    <style name="Theme.VoiceTally4" parent="Theme.Material3.DayNight">
-        <!-- Actiebar uit -->
-        <item name="windowActionBar">false</item>
-        <item name="windowNoTitle">true</item>
 
-        <!-- Venster / systeem bars (donker; witte iconen/tekst) -->
+    <!-- Altijd donker, Material 3, zonder action bar -->
+    <style name="Theme.VoiceTally4" parent="Theme.Material3.Dark.NoActionBar">
+        <!-- Venster & systeem bars -->
         <item name="android:windowBackground">@color/vt4_black</item>
         <item name="android:statusBarColor">@color/vt4_black</item>
         <item name="android:navigationBarColor">@color/vt4_black</item>
+        <!-- Donkere bars => lichte iconen/tekst -->
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
 
-        <!-- Material3 surfaces -->
+        <!-- Material3 surfaces (donker) -->
         <item name="colorSurface">@color/vt4_black</item>
         <item name="colorOnSurface">@color/vt4_white</item>
 
-        <!-- Tekst overal wit; hints altijd lichtgrijs op zwart -->
+        <!-- Teksten/controls licht op donker -->
         <item name="android:textColorPrimary">@color/vt4_white</item>
         <item name="android:textColorSecondary">@color/vt4_white</item>
         <item name="android:textColorHint">@color/vt4_light_gray</item>
         <item name="colorControlNormal">@color/vt4_white</item>
         <item name="colorControlActivated">@color/vt4_white</item>
 
-        <!-- Tappable kleuren (zwart bg, witte tekst, groene outline) -->
+        <!-- App-specifieke kleuren -->
         <item name="colorTappableBg">@color/vt4_black</item>
         <item name="colorTappableText">@color/vt4_white</item>
         <item name="colorTappableOutline">@color/vt4_outline</item>
 
-        <!-- Koppel widget-stijlen -->
+        <!-- Widget-stijlen -->
         <item name="materialButtonStyle">@style/Widget.VoiceTally4.Button</item>
         <item name="materialButtonOutlinedStyle">@style/Widget.VoiceTally4.Button.Outlined</item>
         <item name="materialCardViewStyle">@style/Widget.VoiceTally4.Card</item>
@@ -37,18 +35,18 @@
         <item name="autoCompleteTextViewStyle">@style/Widget.VoiceTally4.AutoCompleteTextView</item>
         <item name="spinnerStyle">@style/Widget.VoiceTally4.Spinner</item>
 
-        <!-- Globaal 6dp afgerond -->
+        <!-- Globale afronding -->
         <item name="shapeAppearanceSmallComponent">@style/ShapeAppearance.VoiceTally4.Rounded6</item>
         <item name="shapeAppearanceMediumComponent">@style/ShapeAppearance.VoiceTally4.Rounded6</item>
         <item name="shapeAppearanceLargeComponent">@style/ShapeAppearance.VoiceTally4.Rounded6</item>
     </style>
-    <style name="Theme.VoiceTally4.Splash" parent="Theme.SplashScreen">
-        <!-- Zwarte achtergrond, mooi passend bij jouw app -->
+
+    <!-- Splash erft van hetzelfde donkere Material 3 thema -->
+    <style name="Theme.VoiceTally4.Splash" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:windowBackground">@color/vt4_black</item>
         <item name="windowSplashScreenBackground">@color/vt4_black</item>
-        <!-- Toon je launcher-icon tijdens de splash -->
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
-        <!-- Na de splash schakelen we automatisch naar je gewone thema -->
-        <item name="postSplashScreenTheme">@style/Theme.VoiceTally4</item>
+        <!-- Geen postSplashScreenTheme meer; de switch doen we in StartActiviteit via setTheme(...) -->
     </style>
 
 </resources>

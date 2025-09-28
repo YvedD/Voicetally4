@@ -21,14 +21,29 @@ class AliasTileAdapter(
 ) : ListAdapter<SoortAlias, AliasTileAdapter.VH>(DIFF) {
 
     companion object {
-        private const val PAYLOAD_SELECTION = 1
+        /** Gebruik een object i.p.v. Int om boxing/equals-kosten te vermijden en === te kunnen gebruiken. */
+        private object PayloadSelection
 
-        val DIFF = object : DiffUtil.ItemCallback<SoortAlias>() {
+        private val DIFF = object : DiffUtil.ItemCallback<SoortAlias>() {
             override fun areItemsTheSame(oldItem: SoortAlias, newItem: SoortAlias): Boolean =
                 oldItem.tileName == newItem.tileName
 
             override fun areContentsTheSame(oldItem: SoortAlias, newItem: SoortAlias): Boolean =
                 oldItem == newItem
+        }
+
+        /**
+         * Stabiele 64-bit hash (FNV-1a) voor minder kans op botsingen dan String.hashCode().
+         * Let op: we gebruiken de gesigneerde representatie van de 64-bit offset/prime.
+         */
+        private fun stableIdFromKey(key: String): Long {
+            var hash = -3750763034362895579L          // 0xcbf29ce484222325 als signed long
+            val prime = 1099511628211L               // 0x00000100000001B3
+            for (ch in key) {
+                hash = hash xor ch.code.toLong()
+                hash *= prime
+            }
+            return hash
         }
     }
 
@@ -48,12 +63,12 @@ class AliasTileAdapter(
                 val item = getItem(pos)
                 onToggle(item.tileName)
                 // Vraag snelle rebind van enkel de selectie-state
-                notifyItemChanged(pos, PAYLOAD_SELECTION)
+                this@AliasTileAdapter.notifyItemChanged(pos, PayloadSelection)
             }
         }
 
         fun bindFull(item: SoortAlias) = with(btn) {
-            // TEKST OP TILE = kolom 2 (tileName)
+            // Tekst op tile = kolom 2 (tileName)
             text = item.tileName
             isChecked = isSelected(item.tileName)
         }
@@ -75,7 +90,7 @@ class AliasTileAdapter(
     }
 
     override fun onBindViewHolder(holder: VH, position: Int, payloads: MutableList<Any>) {
-        if (payloads.isNotEmpty() && payloads.contains(PAYLOAD_SELECTION)) {
+        if (payloads.isNotEmpty() && payloads[0] === PayloadSelection) {
             holder.bindSelectionOnly(getItem(position))
         } else {
             holder.bindFull(getItem(position))
@@ -83,5 +98,5 @@ class AliasTileAdapter(
     }
 
     override fun getItemId(position: Int): Long =
-        getItem(position).tileName.hashCode().toLong()
+        stableIdFromKey(getItem(position).tileName)
 }

@@ -1,537 +1,504 @@
 package com.yvesds.voicetally4.ui.data
 
 import android.content.Context
-import android.net.Uri
-import android.os.Environment
-import android.provider.MediaStore
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import com.yvesds.voicetally4.utils.io.DocumentsAccess
 import com.yvesds.voicetally4.utils.io.StorageUtils
+import com.yvesds.voicetally4.utils.text.TextNormalizer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
-import java.io.ByteArrayOutputStream
-import java.io.DataInputStream
-import java.io.DataOutputStream
-import java.io.EOFException
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
-import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.Charset
+import java.util.zip.CRC32
 
 /**
- * Unified alias store (één bestand, twee secties):
- *  - Sectie 1 (SelectionList v2): volledige records (id, canonical, display, aliases)
- *  - Sectie 2 (SpeechIndex v1): alias -> (id, displayName)
- * Binair: Documents/VoiceTally4/binaries/aliases.vt4bin
+ * Single source of truth voor aliassen & display-namen (bin v2).
  *
- * Zoekstrategie CSV (Android 13/14 best practice):
- *  1) **SAF**: als user een tree heeft gekoppeld, lees "assets/aliasmapping.csv" via DocumentFile
- *  2) App-private File (StorageUtils fallback)
- *  3) Publiek File (kanRead kan false zijn, we proberen het niet direct te gebruiken)
- *  4) MediaStore brede zoekopdracht
+ * Brontabel: /Documents/VoiceTally4/assets/aliasmapping.csv
+ * - Eerst proberen via SAF (persisted tree URI).
+ * - Fallback naar File-IO via StorageUtils (indien toegestaan).
  */
 object UnifiedAliasStore {
 
     private const val TAG = "UnifiedAliasStore"
+    private val UTF8: Charset = Charsets.UTF_8
+    private const val MAGIC = "ALIASBIN"
+    private const val VERSION_V2 = 2
 
-    private const val MAGIC = "VT4ALX\u0000" // 8 bytes
-    private const val FILE_VERSION = 1
-    private const val SECTION_COUNT = 2
-
-    private const val SEC_SELECTION = 1
-    private const val SEC_SPEECH = 2
-
-    private const val SEL_VERSION = 2
-    private const val SPEECH_VERSION = 1
-
-    private const val LEGACY_SELECTION_MAGIC = "ALIASBIN"
-    private const val LEGACY_SPEECH_MAGIC = "VT4ALIAS1"
-
+    private const val BIN_DIR = "binaries"
+    private const val BIN_NAME = "aliases.bin"
+    private const val CSV_DIR = "assets"
     private const val CSV_NAME = "aliasmapping.csv"
-    private const val REL_BASE = "Documents/VoiceTally4"
-    private const val REL_ASSETS = "$REL_BASE/assets"
 
-    data class SelectionEntry(
-        val soortId: String,
+    @Volatile private var initialized = false
+
+    private var speciesCount: Int = 0
+    private lateinit var speciesIdArr: Array<String>
+    private lateinit var canonicalArr: Array<String>
+    private lateinit var displayNameArr: Array<String>
+    private lateinit var aliasStartArr: IntArray
+    private lateinit var aliasCountArr: IntArray
+
+    private var aliasCount: Int = 0
+    private lateinit var aliasKeyArr: Array<String>
+    private lateinit var aliasSpeciesRowIndexArr: IntArray
+
+    // ----------------------- Public API -----------------------
+
+    suspend fun ensureReady(context: Context) {
+        if (initialized) return
+        withContext(Dispatchers.IO) {
+            if (initialized) return@withContext
+            loadOrBuild(context)
+            initialized = true
+        }
+    }
+
+    fun getDisplayName(speciesId: String): String? {
+        if (!initialized) return null
+        val idx = speciesRowIndexById(speciesId) ?: return null
+        return displayNameArr[idx]
+    }
+
+    fun getSpeciesIdForAlias(aliasRaw: String): String? {
+        if (!initialized) return null
+        val needle = TextNormalizer.normalizeBasic(aliasRaw)
+        val idx = binarySearchAlias(needle)
+        if (idx < 0) return null
+        val speciesRow = aliasSpeciesRowIndexArr[idx]
+        return speciesIdArr[speciesRow]
+    }
+
+    fun allTiles(): List<SpeciesTile> {
+        if (!initialized) return emptyList()
+        return List(speciesCount) { i ->
+            SpeciesTile(
+                speciesId = speciesIdArr[i],
+                displayName = displayNameArr[i],
+                canonical = canonicalArr[i]
+            )
+        }
+    }
+
+    // ----------------------- load/build -----------------------
+
+    private fun loadOrBuild(context: Context) {
+        try {
+            val meta = resolveCsvMeta(context) ?: run {
+                Log.e(TAG, "CSV ontbreekt: $CSV_DIR/$CSV_NAME (SAF en File-route faalden).")
+                throw IllegalStateException("aliasmapping.csv niet gevonden.")
+            }
+
+            val binFile = resolveBinFile(context, ensureDir = true)
+
+            if (binFile.exists()) {
+                if (tryLoadFromBin(binFile, meta.size, meta.mtime, meta.crc)) {
+                    Log.i(TAG, "UnifiedAliasStore: geladen uit bestaande bin v2.")
+                    return
+                } else {
+                    Log.w(TAG, "Bestaande bin ongeldig/verouderd — wordt herbouwd.")
+                }
+            } else {
+                Log.i(TAG, "Geen bestaande bin — wordt opgebouwd.")
+            }
+
+            buildFromCsv(meta, binFile)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Fout bij init: ${e.message}", e)
+            resetEmpty()
+        }
+    }
+
+    // Bron-metagegevens + open()-functie (SAF of File)
+    private data class CsvMeta(
+        val open: () -> InputStream,
+        val size: Long,
+        val mtime: Long,
+        val crc: Int
+    )
+
+    /**
+     * Probeer eerst SAF (persisted tree), daarna File-IO via StorageUtils.
+     */
+    private fun resolveCsvMeta(context: Context): CsvMeta? {
+        // 1) SAF via jouw helper
+        resolveCsvViaSaf(context)?.let { return it }
+
+        // 2) File pad (fallback)
+        val file = resolveCsvFile(context) ?: return null
+        if (!file.exists() || !file.isFile) return null
+        val size = file.length()
+        val mtime = file.lastModified()
+        val crc = calcCrc32(FileInputStream(file))
+        return CsvMeta(
+            open = { FileInputStream(file) },
+            size = size,
+            mtime = mtime,
+            crc = crc
+        )
+    }
+
+    /**
+     * Vind exact "assets/aliasmapping.csv" via SAF met de bewaarde tree-uri.
+     * Case-sensitief (alles is lowercase).
+     */
+    private fun resolveCsvViaSaf(context: Context): CsvMeta? {
+        if (!DocumentsAccess.hasPersistedUri(context)) return null
+
+        val doc: DocumentFile = DocumentsAccess
+            .resolveRelativeFile(context, "$CSV_DIR/$CSV_NAME")
+            ?: return null
+
+        if (!doc.isFile || !doc.canRead()) return null
+
+        val size = doc.length()
+        val mtime = doc.lastModified()
+        val crc = context.contentResolver.openInputStream(doc.uri)?.use { calcCrc32(it) } ?: return null
+
+        return CsvMeta(
+            open = { requireNotNull(context.contentResolver.openInputStream(doc.uri)) },
+            size = size,
+            mtime = mtime,
+            crc = crc
+        )
+    }
+
+    private fun tryLoadFromBin(
+        binFile: File,
+        expectedSize: Long,
+        expectedMtime: Long,
+        expectedCrc: Int
+    ): Boolean = try {
+        FileInputStream(binFile).channel.use { ch ->
+            val bb = ch.map(java.nio.channels.FileChannel.MapMode.READ_ONLY, 0, ch.size())
+            bb.order(ByteOrder.BIG_ENDIAN)
+
+            val magic = readFixedAscii(bb, 8)
+            if (magic != MAGIC) return false
+            val version = bb.int
+            if (version != VERSION_V2) return false
+            val csvSize = bb.long
+            val csvMtime = bb.long
+            val csvCrc = bb.int
+            if (csvSize != expectedSize || csvMtime != expectedMtime || csvCrc != expectedCrc) return false
+
+            speciesCount = bb.int
+            aliasCount = bb.int
+            val sectionCount = bb.int
+            if (sectionCount != 2) return false
+
+            val sect0Offset = bb.long
+            val sect0Length = bb.long
+            val sect1Offset = bb.long
+            val sect1Length = bb.long
+
+            bb.position(sect0Offset.toInt())
+            speciesIdArr = Array(speciesCount) { readString(bb) }
+            canonicalArr = Array(speciesCount) { readString(bb) }
+            displayNameArr = Array(speciesCount) { readString(bb) }
+            aliasStartArr = IntArray(speciesCount) { bb.int }
+            aliasCountArr = IntArray(speciesCount) { bb.int }
+
+            bb.position(sect1Offset.toInt())
+            aliasKeyArr = Array(aliasCount) { readString(bb) }
+            aliasSpeciesRowIndexArr = IntArray(aliasCount) { bb.int }
+
+            true
+        }
+    } catch (e: Exception) {
+        Log.e(TAG, "tryLoadFromBin() faalde: ${e.message}")
+        false
+    }
+
+    private fun buildFromCsv(
+        meta: CsvMeta,
+        binFile: File
+    ) {
+        val rows = parseCsv(meta.open)
+        if (rows.isEmpty()) throw IllegalStateException("CSV heeft geen geldige rijen.")
+
+        val spId = ArrayList<String>(rows.size)
+        val spCanonical = ArrayList<String>(rows.size)
+        val spDisplay = ArrayList<String>(rows.size)
+        val aliasStart = IntArray(rows.size)
+        val aliasCountPer = IntArray(rows.size)
+
+        val aliasPairs = ArrayList<Pair<String, Int>>(rows.size * 4)
+
+        rows.forEachIndexed { idx, r ->
+            spId.add(r.speciesId)
+            spCanonical.add(r.canonical)
+            spDisplay.add(r.displayName)
+
+            aliasStart[idx] = aliasPairs.size
+            var cnt = 0
+            r.aliases.forEach { raw ->
+                val norm = TextNormalizer.normalizeBasic(raw)
+                if (norm.isNotBlank()) {
+                    aliasPairs.add(Pair(norm, idx)) // expliciet Pair() i.p.v. `to`
+                    cnt++
+                }
+            }
+            aliasCountPer[idx] = cnt
+        }
+
+        aliasPairs.sortWith(compareBy({ it.first }, { it.second }))
+
+        speciesCount = rows.size
+        aliasCount = aliasPairs.size
+
+        speciesIdArr = spId.toTypedArray()
+        canonicalArr = spCanonical.toTypedArray()
+        displayNameArr = spDisplay.toTypedArray()
+        aliasStartArr = aliasStart
+        aliasCountArr = aliasCountPer
+
+        aliasKeyArr = Array(aliasCount) { i -> aliasPairs[i].first }
+        aliasSpeciesRowIndexArr = IntArray(aliasCount) { i -> aliasPairs[i].second }
+
+        writeBinV2(binFile, meta.size, meta.mtime, meta.crc)
+        Log.i(TAG, "aliases.bin v2 opgebouwd: species=$speciesCount, aliases=$aliasCount")
+    }
+
+    // ----------------------- CSV parsing -----------------------
+
+    private data class CsvRow(
+        val speciesId: String,
         val canonical: String,
-        val display: String,
+        val displayName: String,
         val aliases: List<String>
     )
-    data class SpeechEntry(val id: String, val displayName: String)
 
-    private sealed class CsvSource {
-        data class SafSource(val doc: DocumentFile, val size: Long, val mtimeSecs: Long) : CsvSource()
-        data class FileSource(val file: File) : CsvSource()
-        data class MediaSource(val uri: Uri, val size: Long, val mtimeSecs: Long, val relPath: String) : CsvSource()
+    private fun parseCsv(open: () -> InputStream): List<CsvRow> {
+        val list = ArrayList<CsvRow>(1024)
+        BufferedInputStream(open()).bufferedReader(UTF8).use { br ->
+            var sep: Char? = null
+            br.lineSequence().forEach { rawLine ->
+                val line = rawLine.trim()
+                if (line.isEmpty() || line.startsWith("#")) return@forEach
+                if (sep == null) sep = detectSeparator(line)
+                val parts = line.split(sep ?: ';')
+                if (parts.size < 3) return@forEach
+                val speciesId = parts[0].trim()
+                val canonical = parts[1].trim()
+                val display = parts[2].trim()
+                val aliases = if (parts.size > 3) {
+                    parts.subList(3, parts.size).map { it.trim() }.filter { it.isNotEmpty() }
+                } else emptyList()
+
+                if (speciesId.isEmpty() || display.isEmpty()) return@forEach
+                list += CsvRow(speciesId, canonical, display, aliases)
+            }
+        }
+        return list
     }
 
-    fun preload(context: Context) {
-        try {
-            val unified = readUnifiedIfFresh(context)
-            if (unified == null) {
-                readLegacySelectionMap(context)
-                readLegacySpeech(context)
-            }
-        } catch (t: Throwable) {
-            Log.w(TAG, "preload: ${t.message}")
+    private fun detectSeparator(sample: String): Char =
+        when {
+            sample.contains(';') -> ';'
+            sample.contains(',') -> ','
+            else -> ';'
         }
+
+    // ----------------------- Paths / IO helpers -----------------------
+
+    /** File-route (fallback) naar .../VoiceTally4/assets/aliasmapping.csv */
+    private fun resolveCsvFile(context: Context): File? {
+        val dir = StorageUtils.getPublicAppDir(context, CSV_DIR) ?: return null
+        return File(dir, CSV_NAME)
     }
 
-    fun loadSelectionList(context: Context): List<SelectionEntry> {
-        readUnifiedIfFresh(context)?.let { (sel, _) -> if (sel.isNotEmpty()) return sel }
-
-        readLegacySelectionMap(context)?.let { legacy ->
-            if (legacy.isNotEmpty()) {
-                Log.d(TAG, "Using legacy selection map (aliases.bin)")
-                return legacy.map { (canonical, display) ->
-                    SelectionEntry(soortId = canonical, canonical = canonical, display = display, aliases = emptyList())
-                }
-            }
-        }
-
-        val csvSrc = findCsvSource(context)
-        if (csvSrc == null) {
-            Log.e(TAG, "CSV source not found (SAF/File/MediaStore).")
-            return emptyList()
-        }
-        val (csvSize, csvMtime) = csvMeta(csvSrc)
-
-        val parsed = when (csvSrc) {
-            is CsvSource.SafSource -> {
-                Log.d(TAG, "Parsing CSV via SAF: ${csvSrc.doc.uri}")
-                context.contentResolver.openInputStream(csvSrc.doc.uri)?.use { CsvCompat.parseFullStream(it) } ?: emptyList()
-            }
-            is CsvSource.FileSource -> {
-                Log.d(TAG, "Parsing CSV from File: ${csvSrc.file.absolutePath}")
-                CsvCompat.parseFullFile(csvSrc.file)
-            }
-            is CsvSource.MediaSource -> {
-                Log.d(TAG, "Parsing CSV from MediaStore: ${csvSrc.relPath} (size=$csvSize, mtime=$csvMtime)")
-                context.contentResolver.openInputStream(csvSrc.uri)?.use { CsvCompat.parseFullStream(it) } ?: emptyList()
-            }
-        }
-        if (parsed.isEmpty()) {
-            Log.e(TAG, "CSV parsed empty; check delimiter/format.")
-            return emptyList()
-        }
-
-        val speech = readLegacySpeech(context) ?: emptyMap()
-        writeUnified(context, csvSize, csvMtime, parsed, speech)
-        return parsed
+    /** Bin staat in .../VoiceTally4/binaries/aliases.bin (zoals eerdere code). */
+    private fun resolveBinFile(context: Context, ensureDir: Boolean): File {
+        val dir = StorageUtils.getPublicAppDir(context, BIN_DIR)
+            ?: throw IllegalStateException("Kan map $BIN_DIR niet openen")
+        if (ensureDir && !dir.exists()) dir.mkdirs()
+        return File(dir, BIN_NAME)
     }
 
-    fun loadSpeechIndex(context: Context): Map<String, SpeechEntry> {
-        readUnifiedIfFresh(context)?.let { (_, speech) -> if (speech.isNotEmpty()) return speech }
-        return readLegacySpeech(context) ?: emptyMap()
-    }
-
-    // ---------------- Unified read/write ----------------
-
-    private fun readUnifiedIfFresh(context: Context): Pair<List<SelectionEntry>, Map<String, SpeechEntry>>? {
-        val csvSrc = findCsvSource(context) ?: return null
-        val (csvSize, csvMtime) = csvMeta(csvSrc)
-
-        val file = getUnifiedFile(context)
-        if (!file.exists() || !file.canRead()) return null
-
-        return try {
-            DataInputStream(BufferedInputStream(FileInputStream(file))).use { din ->
-                val headerMagic = ByteArray(8)
-                din.readFully(headerMagic)
-                if (headerMagic.decodeToString() != MAGIC) return null
-
-                val fileVersion = din.readUnsignedShort()
-                if (fileVersion != FILE_VERSION) return null
-
-                val sectionCount = din.readUnsignedShort()
-                if (sectionCount != SECTION_COUNT) return null
-
-                val cachedSize = din.readLong()
-                val cachedMtime = din.readLong()
-                if (cachedSize != csvSize || cachedMtime != csvMtime) {
-                    Log.d(TAG, "Unified not fresh (have size=$cachedSize,mtime=$cachedMtime; need size=$csvSize,mtime=$csvMtime)")
-                    return null
-                }
-
-                data class Sec(val id: Int, val version: Int, val offset: Long, val length: Long)
-                val secs = ArrayList<Sec>(sectionCount)
-                repeat(sectionCount) {
-                    secs += Sec(din.readUnsignedShort(), din.readUnsignedShort(), din.readLong(), din.readLong())
-                }
-
-                var selection: List<SelectionEntry> = emptyList()
-                var speech: Map<String, SpeechEntry> = emptyMap()
-
-                RandomAccessFile(file, "r").use { raf ->
-                    for (s in secs) {
-                        raf.seek(s.offset)
-                        when (s.id) {
-                            SEC_SELECTION -> selection = if (s.version == SEL_VERSION) readSelectionSectionV2(raf) else readSelectionSectionV1(raf)
-                            SEC_SPEECH -> if (s.version == SPEECH_VERSION) speech = readSpeechSectionV1(raf)
-                        }
-                    }
-                }
-                selection to speech
-            }
-        } catch (t: Throwable) {
-            Log.w(TAG, "readUnifiedIfFresh failed: ${t.message}")
-            return null
-        }
-    }
-
-    private fun readSelectionSectionV2(raf: RandomAccessFile): List<SelectionEntry> {
-        val out = ArrayList<SelectionEntry>()
-        val count = raf.readIntBE()
-        repeat(count) {
-            val soortId = raf.readUtf8LenPrefixed()
-            val canonical = raf.readUtf8LenPrefixed()
-            val display = raf.readUtf8LenPrefixed()
-            val aliasCount = raf.readIntBE()
-            val aliases = ArrayList<String>(aliasCount)
-            repeat(aliasCount) { aliases.add(raf.readUtf8LenPrefixed()) }
-            if (canonical.isNotEmpty() && display.isNotEmpty()) {
-                out.add(SelectionEntry(soortId, canonical, display, aliases))
+    private fun calcCrc32(input: InputStream): Int {
+        val crc = CRC32()
+        BufferedInputStream(input).use { inp ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val r = inp.read(buf)
+                if (r <= 0) break
+                crc.update(buf, 0, r)
             }
         }
-        return out
+        return crc.value.toInt()
     }
 
-    private fun readSelectionSectionV1(raf: RandomAccessFile): List<SelectionEntry> {
-        val out = ArrayList<SelectionEntry>()
-        val count = raf.readIntBE()
-        repeat(count) {
-            val canonical = raf.readUtf8LenPrefixed()
-            val display = raf.readUtf8LenPrefixed()
-            if (canonical.isNotEmpty() && display.isNotEmpty()) {
-                out.add(SelectionEntry(soortId = canonical, canonical = canonical, display = display, aliases = emptyList()))
-            }
-        }
-        return out
-    }
+    // ----------------------- Binary helpers -----------------------
 
-    private fun readSpeechSectionV1(raf: RandomAccessFile): Map<String, SpeechEntry> {
-        val out = LinkedHashMap<String, SpeechEntry>()
-        val count = raf.readIntBE()
-        repeat(count) {
-            val alias = raf.readUtf8LenPrefixed()
-            val id = raf.readUtf8LenPrefixed()
-            val display = raf.readUtf8LenPrefixed()
-            if (alias.isNotEmpty() && id.isNotEmpty()) {
-                out[alias] = SpeechEntry(id, display)
-            }
-        }
-        return out
-    }
-
-    private fun writeUnified(
-        context: Context,
+    private fun writeBinV2(
+        binFile: File,
         csvSize: Long,
         csvMtime: Long,
-        selection: List<SelectionEntry>,
-        speech: Map<String, SpeechEntry>
+        csvCrc: Int
     ) {
-        val file = getUnifiedFile(context)
-        file.parentFile?.mkdirs()
+        val tmp = File(binFile.parentFile, "$BIN_NAME.tmp")
+        FileOutputStream(tmp).use { fos ->
+            BufferedOutputStream(fos).use { bos ->
+                // Bouw secties met exacte grootte
+                val sectSpecies = writeSpeciesSectionToBuffer()
+                val sectAliases = writeAliasesSectionToBuffer()
 
-        val selBaos = ByteArrayOutputStream()
-        DataOutputStream(BufferedOutputStream(selBaos)).use { dout ->
-            dout.writeInt(selection.size)
-            for (e in selection) {
-                writeUtf8LenPrefixed(dout, e.soortId)
-                writeUtf8LenPrefixed(dout, e.canonical)
-                writeUtf8LenPrefixed(dout, e.display)
-                dout.writeInt(e.aliases.size)
-                for (a in e.aliases) writeUtf8LenPrefixed(dout, a)
+                // === Header ===
+                // Velden: magic(8) + version(4) + csvSize(8) + csvMtime(8) + csvCrc(4)
+                //       + speciesCount(4) + aliasCount(4) + sectionCount(4)
+                //       + (offset(8)+length(8)) * 2
+                val headerSize = 8 + 4 + 8 + 8 + 4 + 4 + 4 + 4 + (8 + 8) * 2
+                val header = ByteBuffer.allocate(headerSize).order(ByteOrder.BIG_ENDIAN)
+
+                writeFixedAscii(header, MAGIC, 8)
+                header.putInt(VERSION_V2)
+                header.putLong(csvSize)
+                header.putLong(csvMtime)
+                header.putInt(csvCrc)
+                header.putInt(speciesCount)
+                header.putInt(aliasCount)
+                header.putInt(2) // sectionCount
+
+                var offset = header.capacity().toLong()
+                val sect0Offset = offset
+                val sect0Len = sectSpecies.limit().toLong()
+                offset += sect0Len
+                val sect1Offset = offset
+                val sect1Len = sectAliases.limit().toLong()
+                offset += sect1Len
+
+                header.putLong(sect0Offset)
+                header.putLong(sect0Len)
+                header.putLong(sect1Offset)
+                header.putLong(sect1Len)
+
+                header.flip()
+                bos.write(header.array(), 0, header.limit())
+                bos.write(sectSpecies.array(), 0, sectSpecies.limit())
+                bos.write(sectAliases.array(), 0, sectAliases.limit())
+                bos.flush()
             }
-            dout.flush()
         }
-        val selBytes = selBaos.toByteArray()
-
-        val spBaos = ByteArrayOutputStream()
-        DataOutputStream(BufferedOutputStream(spBaos)).use { dout ->
-            dout.writeInt(speech.size)
-            for ((alias, entry) in speech) {
-                writeUtf8LenPrefixed(dout, alias)
-                writeUtf8LenPrefixed(dout, entry.id)
-                writeUtf8LenPrefixed(dout, entry.displayName)
-            }
-            dout.flush()
-        }
-        val spBytes = spBaos.toByteArray()
-
-        DataOutputStream(BufferedOutputStream(FileOutputStream(file))).use { dout ->
-            dout.write(MAGIC.toByteArray(Charsets.US_ASCII))
-            dout.writeShort(FILE_VERSION)
-            dout.writeShort(SECTION_COUNT)
-            dout.writeLong(csvSize)
-            dout.writeLong(csvMtime)
-
-            val headerSize = 8 + 2 + 2 + 8 + 8
-            val tableSize = SECTION_COUNT * (2 + 2 + 8 + 8)
-            var offset = (headerSize + tableSize).toLong()
-
-            dout.writeShort(SEC_SELECTION)
-            dout.writeShort(SEL_VERSION)
-            dout.writeLong(offset)
-            dout.writeLong(selBytes.size.toLong())
-            offset += selBytes.size
-
-            dout.writeShort(SEC_SPEECH)
-            dout.writeShort(SPEECH_VERSION)
-            dout.writeLong(offset)
-            dout.writeLong(spBytes.size.toLong())
-
-            dout.write(selBytes)
-            dout.write(spBytes)
-            dout.flush()
-        }
+        if (binFile.exists()) binFile.delete()
+        tmp.renameTo(binFile)
     }
 
-    // ---------------- CSV-locator ----------------
-
-    private fun findCsvSource(context: Context): CsvSource? {
-        // (1) SAF (persistente toegang)
-        if (DocumentsAccess.hasPersistedUri(context)) {
-            val doc = DocumentsAccess.resolveRelativeFile(context, "assets/$CSV_NAME")
-            if (doc != null && doc.isFile) {
-                val size = doc.length()
-                val mtime = doc.lastModified() / 1000L
-                Log.d(TAG, "CSV via SAF: ${doc.uri} (size=$size,mtime=$mtime)")
-                return CsvSource.SafSource(doc, size, mtime)
-            } else {
-                // map "assets" bestaat? (optioneel)
-                DocumentsAccess.getOrCreateSubdir(context, "assets")
-            }
+    private fun writeSpeciesSectionToBuffer(): ByteBuffer {
+        // Bereken exacte bytes:
+        // per string: 4 (length) + bytes.size, plus 2 ints (aliasStart, aliasCount)
+        var total = 0
+        for (i in 0 until speciesCount) {
+            total += 4 + speciesIdArr[i].toByteArray(UTF8).size
+            total += 4 + canonicalArr[i].toByteArray(UTF8).size
+            total += 4 + displayNameArr[i].toByteArray(UTF8).size
+            total += 4 /*aliasStart*/ + 4 /*aliasCount*/
         }
-
-        // (2) App-private (via StorageUtils fallback)
-        val appDir = StorageUtils.getPublicAppDir(context, "assets")
-        val appFile = File(appDir, CSV_NAME)
-        if (appFile.exists() && appFile.isFile && appFile.canRead()) {
-            Log.d(TAG, "CSV via app-private File: ${appFile.absolutePath}")
-            return CsvSource.FileSource(appFile)
+        val bb = ByteBuffer.allocate(total).order(ByteOrder.BIG_ENDIAN)
+        repeat(speciesCount) { i ->
+            writeString(bb, speciesIdArr[i])
+            writeString(bb, canonicalArr[i])
+            writeString(bb, displayNameArr[i])
+            bb.putInt(aliasStartArr[i])
+            bb.putInt(aliasCountArr[i])
         }
+        bb.flip()
+        return bb
+    }
 
-        // (3) Publiek bestand: niet op vertrouwen (canRead kan false zijn), maar we loggen voor debug
-        val publicFile = publicCsvFile()
-        if (publicFile.exists() && publicFile.isFile) {
-            Log.d(TAG, "CSV publiek path gedetecteerd: ${publicFile.absolutePath} (canRead=${publicFile.canRead()})")
+    private fun writeAliasesSectionToBuffer(): ByteBuffer {
+        // per alias: 4 + bytes(alias) + 4 (speciesRowIndex)
+        var total = 0
+        for (i in 0 until aliasCount) {
+            total += 4 + aliasKeyArr[i].toByteArray(UTF8).size
+            total += 4
         }
+        val bb = ByteBuffer.allocate(total).order(ByteOrder.BIG_ENDIAN)
+        repeat(aliasCount) { i ->
+            writeString(bb, aliasKeyArr[i])
+            bb.putInt(aliasSpeciesRowIndexArr[i])
+        }
+        bb.flip()
+        return bb
+    }
 
-        // (4) MediaStore brede zoektocht
-        val msPrimary = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        val sizeCol = MediaStore.Files.FileColumns.SIZE
-        val dateModCol = MediaStore.Files.FileColumns.DATE_MODIFIED
-        val relCol = MediaStore.Files.FileColumns.RELATIVE_PATH
-        val nameCol = MediaStore.Files.FileColumns.DISPLAY_NAME
+    private fun readFixedAscii(bb: ByteBuffer, len: Int): String {
+        val arr = ByteArray(len)
+        bb.get(arr)
+        return arr.toString(Charsets.US_ASCII)
+    }
 
-        fun pickNewest(list: MutableList<CsvSource.MediaSource>): CsvSource.MediaSource? {
-            if (list.isEmpty()) return null
-            list.sortByDescending { it.mtimeSecs }
-            list.firstOrNull { it.relPath.contains("VoiceTally4", ignoreCase = true) }?.let { return it }
-            return list.first()
-        }
+    private fun writeFixedAscii(bb: ByteBuffer, s: String, len: Int) {
+        val arr = ByteArray(len) { 0 }
+        val bytes = s.toByteArray(Charsets.US_ASCII)
+        val n = minOf(len, bytes.size)
+        System.arraycopy(bytes, 0, arr, 0, n)
+        bb.put(arr)
+    }
 
-        fun query(selection: String, args: Array<String>): CsvSource.MediaSource? {
-            val out = mutableListOf<CsvSource.MediaSource>()
-            context.contentResolver.query(
-                msPrimary,
-                arrayOf(MediaStore.Files.FileColumns._ID, sizeCol, dateModCol, relCol, nameCol),
-                selection, args, null
-            )?.use { c ->
-                while (c.moveToNext()) {
-                    val id = c.getLong(0)
-                    val size = c.getLong(1)
-                    val mtime = c.getLong(2)
-                    val rel = c.getString(3) ?: ""
-                    val name = c.getString(4) ?: ""
-                    if (name.equals(CSV_NAME, ignoreCase = true)) {
-                        val uri = Uri.withAppendedPath(msPrimary, id.toString())
-                        out += CsvSource.MediaSource(uri, size, mtime, rel)
-                    }
-                }
-            }
-            return pickNewest(out)
-        }
+    private fun readString(bb: ByteBuffer): String {
+        val n = bb.int
+        if (n < 0 || n > (64 * 1024 * 1024)) throw IllegalStateException("String length invalid: $n")
+        val bytes = ByteArray(n)
+        bb.get(bytes)
+        return String(bytes, UTF8)
+    }
 
-        query("$nameCol=? AND $relCol LIKE ?", arrayOf(CSV_NAME, "$REL_ASSETS/%"))?.let {
-            Log.d(TAG, "CSV via MediaStore (assets): rel=${it.relPath}, mtime=${it.mtimeSecs}")
-            return it
-        }
-        query("$nameCol=? AND $relCol LIKE ?", arrayOf(CSV_NAME, "$REL_BASE/%"))?.let {
-            Log.d(TAG, "CSV via MediaStore (VoiceTally4/*): rel=${it.relPath}, mtime=${it.mtimeSecs}")
-            return it
-        }
-        query("$nameCol=?", arrayOf(CSV_NAME))?.let {
-            Log.d(TAG, "CSV via MediaStore (global by name): rel=${it.relPath}, mtime=${it.mtimeSecs}")
-            return it
-        }
+    private fun writeString(bb: ByteBuffer, s: String) {
+        val bytes = s.toByteArray(UTF8)
+        bb.putInt(bytes.size)
+        bb.put(bytes)
+    }
 
-        Log.w(TAG, "CSV niet gevonden via SAF/File/MediaStore.")
+    // ----------------------- Lookups -----------------------
+
+    private fun speciesRowIndexById(speciesId: String): Int? {
+        for (i in 0 until speciesCount) {
+            if (speciesIdArr[i] == speciesId) return i
+        }
         return null
     }
 
-    private fun csvMeta(src: CsvSource): Pair<Long, Long> = when (src) {
-        is CsvSource.SafSource -> src.size to src.mtimeSecs
-        is CsvSource.FileSource -> src.file.length() to (src.file.lastModified() / 1000L)
-        is CsvSource.MediaSource -> src.size to src.mtimeSecs
-    }
-
-    private fun publicCsvFile(): File {
-        val publicDocs = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
-            @Suppress("DEPRECATION")
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
-        } else {
-            @Suppress("DEPRECATION")
-            File(Environment.getExternalStorageDirectory(), "Documents")
-        }
-        return File(File(publicDocs, "VoiceTally4/assets"), CSV_NAME)
-    }
-
-    // ---------------- Legacy readers ----------------
-
-    private fun readLegacySelectionMap(context: Context): Map<String, String>? {
-        val binDir = StorageUtils.getPublicAppDir(context, "binaries")
-        val file = File(binDir, "aliases.bin")
-        if (!file.exists() || !file.canRead()) return null
-        return try {
-            DataInputStream(BufferedInputStream(FileInputStream(file))).use { din ->
-                val magic = ByteArray(8)
-                din.readFully(magic)
-                if (magic.decodeToString() != LEGACY_SELECTION_MAGIC) return@use null
-                val version = din.readInt()
-                if (version != 1) return@use null
-                din.readLong()
-                din.readLong()
-                val count = din.readInt()
-                val out = LinkedHashMap<String, String>(count)
-                repeat(count) {
-                    val canonical = din.readUtf8LenPrefixed()
-                    val display = din.readUtf8LenPrefixed()
-                    if (canonical.isNotEmpty() && display.isNotEmpty()) out[canonical] = display
-                }
-                out
+    private fun binarySearchAlias(needle: String): Int {
+        var lo = 0
+        var hi = aliasCount - 1
+        while (lo <= hi) {
+            val mid = (lo + hi) ushr 1
+            val cmp = aliasKeyArr[mid].compareTo(needle)
+            when {
+                cmp < 0 -> lo = mid + 1
+                cmp > 0 -> hi = mid - 1
+                else -> return mid
             }
-        } catch (t: Throwable) {
-            Log.w(TAG, "readLegacySelectionMap: ${t.message}")
-            null
         }
+        return -1
     }
 
-    private fun readLegacySpeech(context: Context): Map<String, SpeechEntry>? {
-        val binDir = StorageUtils.getPublicAppDir(context, "binaries")
-        val file = File(binDir, "aliasmapping.bin")
-        if (!file.exists() || !file.canRead()) return null
-        return try {
-            DataInputStream(BufferedInputStream(FileInputStream(file))).use { din ->
-                val headerBytes = ByteArray(LEGACY_SPEECH_MAGIC.length)
-                din.readFully(headerBytes)
-                val header = headerBytes.decodeToString()
-                if (header != LEGACY_SPEECH_MAGIC) return@use null
-
-                val out = LinkedHashMap<String, SpeechEntry>()
-                while (true) {
-                    val alias = try { din.readUTF() } catch (_: EOFException) { break }
-                    val id = din.readUTF()
-                    val display = din.readUTF()
-                    if (alias.isNotEmpty() && id.isNotEmpty()) {
-                        out[alias.trim().lowercase()] = SpeechEntry(id, display)
-                    }
-                }
-                out
-            }
-        } catch (t: Throwable) {
-            Log.w(TAG, "readLegacySpeech: ${t.message}")
-            null
-        }
-    }
-
-    // ---------------- IO helpers ----------------
-
-    private fun RandomAccessFile.readIntBE(): Int {
-        val b = ByteArray(4)
-        readFully(b)
-        return ByteBuffer.wrap(b).order(ByteOrder.BIG_ENDIAN).int
-    }
-
-    private fun RandomAccessFile.readUtf8LenPrefixed(): String {
-        val len = readIntBE()
-        if (len <= 0 || len > 4_000_000) return ""
-        val buf = ByteArray(len)
-        readFully(buf)
-        return buf.toString(Charset.forName("UTF-8"))
-    }
-
-    private fun DataInputStream.readUtf8LenPrefixed(): String {
-        val len = readInt()
-        if (len <= 0 || len > 4_000_000) return ""
-        val buf = ByteArray(len)
-        readFully(buf)
-        return buf.toString(Charset.forName("UTF-8"))
-    }
-
-    private fun writeUtf8LenPrefixed(dout: DataOutputStream, value: String) {
-        val bytes = value.toByteArray(Charsets.UTF_8)
-        dout.writeInt(bytes.size)
-        dout.write(bytes)
-    }
-
-    private fun getUnifiedFile(context: Context): File {
-        val dir = StorageUtils.getPublicAppDir(context, "binaries")
-        return File(dir, "aliases.vt4bin")
+    private fun resetEmpty() {
+        speciesCount = 0
+        aliasCount = 0
+        speciesIdArr = emptyArray()
+        canonicalArr = emptyArray()
+        displayNameArr = emptyArray()
+        aliasStartArr = IntArray(0)
+        aliasCountArr = IntArray(0)
+        aliasKeyArr = emptyArray()
+        aliasSpeciesRowIndexArr = IntArray(0)
+        initialized = true
     }
 }
 
-/** CSV-parser die volledige SelectionEntry’s oplevert. */
-private object CsvCompat {
-
-    fun parseFullFile(csvFile: File): List<UnifiedAliasStore.SelectionEntry> {
-        csvFile.inputStream().use { return parseFullStream(it) }
-    }
-
-    fun parseFullStream(input: InputStream): List<UnifiedAliasStore.SelectionEntry> {
-        val rows = ArrayList<List<String>>()
-        input.bufferedReader(Charsets.UTF_8).useLines { lines ->
-            lines.forEach { raw ->
-                val line = raw.trim()
-                if (line.isEmpty() || line.startsWith("#")) return@forEach
-                rows.add(line.split(Regex("[;,]")).map { it.trim() })
-            }
-        }
-        if (rows.isEmpty()) return emptyList()
-
-        val out = ArrayList<UnifiedAliasStore.SelectionEntry>(rows.size)
-        for (cols in rows) {
-            if (cols.size < 2) continue
-
-            val canonical = cols[0]
-            val display = cols[1]
-            var soortId: String? = null
-            val aliases = ArrayList<String>()
-
-            if (cols.size > 2) {
-                for (i in 2 until cols.size) {
-                    val v = cols[i]
-                    if (v.isEmpty()) continue
-                    if (soortId == null && v.all { it.isDigit() }) {
-                        soortId = v
-                    } else {
-                        aliases.add(v)
-                    }
-                }
-            }
-            val idFinal = (soortId ?: canonical)
-            if (canonical.isNotEmpty() && display.isNotEmpty()) {
-                out.add(UnifiedAliasStore.SelectionEntry(idFinal, canonical, display, aliases))
-            }
-        }
-        val dedup = LinkedHashMap<String, UnifiedAliasStore.SelectionEntry>(out.size)
-        for (e in out) dedup[e.canonical] = e
-        return dedup.values.toList()
-    }
-}
+data class SpeciesTile(
+    val speciesId: String,
+    val displayName: String,
+    val canonical: String
+)

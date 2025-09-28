@@ -28,11 +28,15 @@ import com.yvesds.voicetally4.ui.domein.SoortSelectieViewModel
 import com.yvesds.voicetally4.ui.domein.SoortSelectieViewModel.UiState
 import com.yvesds.voicetally4.ui.shared.SharedSpeciesViewModel
 import com.yvesds.voicetally4.utils.io.DocumentsAccess
-import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import kotlin.math.max
 
-@AndroidEntryPoint
+/**
+ * Soortselectie met snelle grid (tiles):
+ * - Tiles tonen displayName (tileName) uit UnifiedAliasStore via SoortSelectieViewModel.
+ * - Selectiestatus en OK-actie blijven zoals in jouw oorspronkelijke code.
+ * - SAF-koppeling (Documents) blijft identiek, met herladen na toestemming.
+ */
 class SoortSelectieScherm : Fragment() {
 
     private var _binding: FragmentSoortSelectieSchermBinding? = null
@@ -42,20 +46,23 @@ class SoortSelectieScherm : Fragment() {
     private val sharedVm: SharedSpeciesViewModel by activityViewModels()
 
     private lateinit var adapter: AliasTileAdapter
+    private var gridLayoutManager: GridLayoutManager? = null
 
     // ACTION_OPEN_DOCUMENT_TREE voor Documents (of VoiceTally4)
-    private val pickTreeLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
-        if (res.resultCode == Activity.RESULT_OK) {
-            val uri: Uri? = res.data?.data
-            if (uri != null) {
-                // Persistente toestemming opslaan
-                DocumentsAccess.persistTreeUri(requireContext(), uri)
-                Snackbar.make(binding.root, "Documenten-map gekoppeld.", Snackbar.LENGTH_SHORT).show()
-                // Opnieuw laden
-                viewModel.forceReload()
+    private val pickTreeLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+            if (res.resultCode == Activity.RESULT_OK) {
+                val uri: Uri? = res.data?.data
+                if (uri != null) {
+                    // Persistente toestemming opslaan
+                    DocumentsAccess.persistTreeUri(requireContext(), uri)
+                    Snackbar.make(binding.root, "Documenten-map gekoppeld.", Snackbar.LENGTH_SHORT)
+                        .show()
+                    // Opnieuw laden
+                    viewModel.forceReload()
+                }
             }
         }
-    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -69,14 +76,15 @@ class SoortSelectieScherm : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // --- Snelle grid i.p.v. Flexbox: veel minder reflow bij first layout ---
+        // Grid met auto kolommen (sneller dan Flexbox)
         val spanCount = calculateAutoSpanCount(
             dm = resources.displayMetrics,
             rootHorizontalPaddingPx = binding.root.paddingStart + binding.root.paddingEnd,
             minTileWidthDp = 120f
         )
-        val lm = GridLayoutManager(requireContext(), spanCount)
-        binding.recycler.layoutManager = lm
+        gridLayoutManager = GridLayoutManager(requireContext(), spanCount).also {
+            binding.recycler.layoutManager = it
+        }
         binding.recycler.setHasFixedSize(true)
         binding.recycler.itemAnimator = null
         binding.recycler.setItemViewCacheSize(128)
@@ -85,7 +93,7 @@ class SoortSelectieScherm : Fragment() {
             isSelected = { tileName -> viewModel.isSelected(tileName) },
             onToggle = { tileName ->
                 viewModel.toggleSelection(tileName)
-                // Geen notifyDataSetChanged(); de ViewHolder doet al notifyItemChanged(payload)
+                // Snelle herbind van selectie-state via payload in de adapter
                 updateSelectionStatus()
             }
         )
@@ -98,7 +106,7 @@ class SoortSelectieScherm : Fragment() {
             }
         }
 
-        // Start load (CSV of binaire cache)
+        // Start load (UnifiedAliasStore onderliggend)
         viewModel.loadAliases()
 
         // OK: schrijf selectie naar gedeelde VM en navigeer naar Tally
@@ -106,7 +114,6 @@ class SoortSelectieScherm : Fragment() {
             val (chosenCanonical, displayMap) = buildSelectionAndDisplayMap()
             sharedVm.setSelectedSpecies(chosenCanonical)
             if (displayMap.isNotEmpty()) sharedVm.setDisplayNames(displayMap)
-            // Geen Snackbar hier — we houden de overgang strak en snel
             findNavController().navigate(R.id.action_soortSelectieScherm_to_tallyScherm)
         }
 
@@ -120,8 +127,10 @@ class SoortSelectieScherm : Fragment() {
                 binding.emptyView.isVisible = false
                 binding.btnOk.isEnabled = false
             }
+
             is UiState.Success -> {
                 val tiles: List<SoortAlias> = state.items.map {
+                    // ViewModel levert: soortId, canonical, tileName
                     SoortAlias(
                         soortId = it.soortId,
                         canonical = it.canonical,
@@ -134,6 +143,7 @@ class SoortSelectieScherm : Fragment() {
                 binding.btnOk.isEnabled = true
                 updateSelectionStatus()
             }
+
             is UiState.Error -> {
                 adapter.submitList(emptyList())
                 binding.emptyView.isVisible = true
@@ -168,8 +178,13 @@ class SoortSelectieScherm : Fragment() {
         val state = viewModel.uiState.value
         if (state !is UiState.Success) return emptyList<String>() to emptyMap()
 
+        // Selectie is gebaseerd op tileName (zoals voorheen)
         val selected = state.items.filter { viewModel.isSelected(it.tileName) }
+
+        // canonicals voor downstream (Tally VM gebruikt deze al)
         val chosenCanonical = selected.map { it.canonical }
+
+        // mapping canonical -> tileName (displayname)
         val displayMap = selected.associate { it.canonical to it.tileName }
         return chosenCanonical to displayMap
     }
@@ -187,6 +202,7 @@ class SoortSelectieScherm : Fragment() {
     override fun onDestroyView() {
         super.onDestroyView()
         _binding = null
+        gridLayoutManager = null
     }
 
     private fun calculateAutoSpanCount(

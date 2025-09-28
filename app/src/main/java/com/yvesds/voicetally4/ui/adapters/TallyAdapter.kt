@@ -5,45 +5,81 @@ import android.view.ViewGroup
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
-import com.yvesds.voicetally4.databinding.ItemTallyBinding
-import com.yvesds.voicetally4.ui.tally.TallyViewModel
+import com.yvesds.voicetally4.databinding.ItemSpeciesTileVt4Binding
 
-/**
- * Toont displayName (tile-name) i.p.v. canonical, met +/-/reset knoppen.
- */
 class TallyAdapter(
-    private val onIncrement: (canonical: String) -> Unit,
-    private val onDecrement: (canonical: String) -> Unit,
-    private val onReset: (canonical: String) -> Unit
-) : ListAdapter<TallyViewModel.TallyItem, TallyAdapter.VH>(DIFF) {
+    private val onTileClick: (speciesId: String) -> Unit
+) : ListAdapter<TallyItem, TallyAdapter.VH>(DIFF) {
 
     companion object {
-        private val DIFF = object : DiffUtil.ItemCallback<TallyViewModel.TallyItem>() {
-            override fun areItemsTheSame(oldItem: TallyViewModel.TallyItem, newItem: TallyViewModel.TallyItem): Boolean =
-                oldItem.canonical == newItem.canonical
+        private const val PAYLOAD_COUNT = 1
 
-            override fun areContentsTheSame(oldItem: TallyViewModel.TallyItem, newItem: TallyViewModel.TallyItem): Boolean =
-                oldItem == newItem
+        val DIFF = object : DiffUtil.ItemCallback<TallyItem>() {
+            override fun areItemsTheSame(oldItem: TallyItem, newItem: TallyItem): Boolean =
+                oldItem.speciesId == newItem.speciesId
+
+            override fun areContentsTheSame(oldItem: TallyItem, newItem: TallyItem): Boolean =
+                oldItem.name == newItem.name && oldItem.count == newItem.count
+
+            override fun getChangePayload(oldItem: TallyItem, newItem: TallyItem): Any? {
+                return if (oldItem.name == newItem.name && oldItem.count != newItem.count) {
+                    PAYLOAD_COUNT
+                } else null
+            }
         }
     }
 
-    class VH(val binding: ItemTallyBinding) : RecyclerView.ViewHolder(binding.root)
+    init {
+        setHasStableIds(true)
+        stateRestorationPolicy = StateRestorationPolicy.PREVENT_WHEN_EMPTY
+    }
+
+    inner class VH(val binding: ItemSpeciesTileVt4Binding) : RecyclerView.ViewHolder(binding.root) {
+
+        init {
+            binding.tileRoot.setOnClickListener {
+                val pos = bindingAdapterPosition
+                if (pos == RecyclerView.NO_POSITION) return@setOnClickListener
+                val item = getItem(pos)
+                onTileClick(item.speciesId)
+            }
+        }
+
+        fun bindFull(item: TallyItem) = with(binding) {
+            tvSpeciesName.text = item.name
+            tvSpeciesCount.text = item.count.toString()
+        }
+
+        fun bindCountOnly(item: TallyItem) = with(binding) {
+            tvSpeciesCount.text = item.count.toString()
+        }
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-        val inflater = LayoutInflater.from(parent.context)
-        val binding = ItemTallyBinding.inflate(inflater, parent, false)
+        val binding = ItemSpeciesTileVt4Binding.inflate(
+            LayoutInflater.from(parent.context), parent, false
+        )
         return VH(binding)
     }
 
     override fun onBindViewHolder(holder: VH, position: Int) {
-        val item = getItem(position)
-        holder.binding.apply {
-            textSpeciesName.text = item.displayName
-            textCount.text = item.count.toString()
+        holder.bindFull(getItem(position))
+    }
 
-            buttonIncrement.setOnClickListener { onIncrement(item.canonical) }
-            buttonDecrement.setOnClickListener { onDecrement(item.canonical) }
-            buttonReset.setOnClickListener     { onReset(item.canonical) }
+    override fun onBindViewHolder(holder: VH, position: Int, payloads: MutableList<Any>) {
+        if (payloads.isNotEmpty() && payloads.contains(PAYLOAD_COUNT)) {
+            holder.bindCountOnly(getItem(position))
+        } else {
+            holder.bindFull(getItem(position))
         }
     }
+
+    override fun getItemId(position: Int): Long =
+        getItem(position).speciesId.hashCode().toLong()
 }
+
+data class TallyItem(
+    val speciesId: String,
+    val name: String,
+    val count: Int
+)

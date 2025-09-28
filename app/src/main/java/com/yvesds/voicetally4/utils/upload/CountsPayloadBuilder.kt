@@ -1,36 +1,57 @@
 package com.yvesds.voicetally4.utils.upload
 
-import android.content.Context
 import com.yvesds.voicetally4.ui.data.MetadataForm
+import com.yvesds.voicetally4.utils.io.CodesJsonReader
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.roundToInt
 
 /**
- * Snel en allocatie-arm JSON-builder voor Trektellen /api/counts_save.
- *
- * Kenmerken
- * - StringBuilder i.p.v. JSONObject/JSONArray → minder GC en sneller.
- * - Geen I/O, geen main-thread werk; pure CPU.
- * - Payload blijft identiek qua veldnamen/waardetypes (strings waar jij ze als string postte).
- * - Geen demo/hardcoded records meer. Je kunt records zelf aanleveren als JSON-string (dataArrayJson).
- * - Timezone wordt standaard als "Europe/Brussels" gezet; JSON-escape converteert dit naar "Europe\/Brussels".
- *
- * Gebruik
- * - buildStart(...): start een telling zonder records (nrec/nsoort = "0", data = []).
- * - buildWithData(...): voortzetten/aanpassen met onlineId + jouw eigen data-array (als JSON-string).
- * - buildWithDataUsingPrefs(...): variant die onlineId uit prefs haalt (upload_prefs/last_onlineid).
+ * Bouwt de start-payload met kotlinx.serialization.
+ * Vereisten (expliciet):
+ * - "externid"      = "Android App 1.8.45" (vast)
+ * - "timezoneid"    = "Europe/Brussels"    (vast)
+ * - "bron"          = "4"
+ * - "temperatuur"   = afgerond op dichtstbijzijnde geheel getal, als string
+ * - "uploadtijdstip"= huidige lokale tijd in Europe/Brussels, "yyyy-MM-dd HH:mm:ss"
+ * - data[] = leeg, nrec/nsoort = ""
+ * - typetelling = servercode via CodesJsonReader (label → code)
+ * - geen BuildConfig, geen Context
  */
 object CountsPayloadBuilder {
 
-    // ======================
-    // Publieke API
-    // ======================
+    private const val EXTERN_ID = "Android App 1.8.45"
+    private const val TIMEZONE_ID = "Europe/Brussels"
+    private const val BRON = "4"
+
+    private val json by lazy {
+        Json {
+            prettyPrint = false
+            encodeDefaults = true
+            ignoreUnknownKeys = true
+        }
+    }
+
+    // Alleen voor debug/logging-bestand
+    private val jsonPretty by lazy {
+        Json {
+            prettyPrint = true
+            encodeDefaults = true
+            ignoreUnknownKeys = true
+        }
+    }
+
+    private val uploadStampFormatter: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.US)
+    private val zoneBrussels: ZoneId = ZoneId.of(TIMEZONE_ID)
 
     /**
-     * Bouw payload voor een **nieuwe telling** (zonder onlineid) en **zonder** records.
-     * - nrec/nsoort = "0"
-     * - data = []
+     * Compacte payload die je POST naar de server.
      */
     fun buildStart(
         form: MetadataForm,
@@ -39,265 +60,151 @@ object CountsPayloadBuilder {
         weerOpmerking: String,
         telpostId: String
     ): String {
-        return buildInternal(
-            form = form,
-            beginSec = beginSec,
-            eindSec = eindSec,
-            weerOpmerking = weerOpmerking,
-            telpostId = telpostId,
-            onlineId = "", // nieuwe telling
-            nrec = "0",
-            nsoort = "0",
-            dataArrayJson = "[]"
-        )
+        val header = buildHeader(form, beginSec, eindSec, weerOpmerking, telpostId)
+        val envelope: UploadEnvelope = listOf(header)
+        return json.encodeToString(envelope)
     }
 
     /**
-     * Bouw payload voor **voortzetten/aanpassen** met reeds gekende onlineId en jouw eigen data-array.
-     * - Geef nrec/nsoort mee (vaak gelijk aan aantal records en aantal soorten).
-     * - dataArrayJson moet geldige JSON zijn: bv. `[{"_id":"...","soortid":"...","aantal":"..."}]`
+     * Zelfde payload, pretty-printed (handig voor logs/bestand).
      */
-    fun buildWithData(
+    fun buildStartPretty(
         form: MetadataForm,
         beginSec: Long,
         eindSec: Long,
         weerOpmerking: String,
-        telpostId: String,
-        onlineId: String,
-        nrec: Int,
-        nsoort: Int,
-        dataArrayJson: String
+        telpostId: String
     ): String {
-        return buildInternal(
-            form = form,
-            beginSec = beginSec,
-            eindSec = eindSec,
-            weerOpmerking = weerOpmerking,
-            telpostId = telpostId,
-            onlineId = onlineId,
-            nrec = nrec.toString(),
-            nsoort = nsoort.toString(),
-            dataArrayJson = dataArrayJson
-        )
+        val header = buildHeader(form, beginSec, eindSec, weerOpmerking, telpostId)
+        val envelope: UploadEnvelope = listOf(header)
+        return jsonPretty.encodeToString(envelope)
     }
 
-    /**
-     * Convenience: lees onlineId uit SharedPreferences (upload_prefs/last_onlineid) en bouw payload met data.
-     * @return Result.success(json) of Result.failure als onlineId ontbreekt.
-     */
-    fun buildWithDataUsingPrefs(
-        context: Context,
+    // ---- core opbouw ----
+
+    private fun buildHeader(
         form: MetadataForm,
         beginSec: Long,
         eindSec: Long,
         weerOpmerking: String,
-        telpostId: String,
-        nrec: Int,
-        nsoort: Int,
-        dataArrayJson: String,
-        prefsName: String = "upload_prefs",
-        keyOnlineId: String = "last_onlineid"
-    ): Result<String> {
-        val onlineId = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
-            .getString(keyOnlineId, null)
-            ?.takeIf { it.isNotBlank() }
-            ?: return Result.failure(IllegalStateException("Geen onlineid in prefs ($prefsName/$keyOnlineId)"))
-        return Result.success(
-            buildWithData(
-                form = form,
-                beginSec = beginSec,
-                eindSec = eindSec,
-                weerOpmerking = weerOpmerking,
-                telpostId = telpostId,
-                onlineId = onlineId,
-                nrec = nrec,
-                nsoort = nsoort,
-                dataArrayJson = dataArrayJson
-            )
+        telpostId: String
+    ): UploadHeader {
+        val typeTellingCode = mapTypeTellingToCode(form.typeTelling)
+
+        // Temperatuur: afronden naar dichtstbijzijnde integer, als string
+        val tempRounded: String = form.temperatuurC
+            ?.let { it.roundToInt().toString() }
+            ?: ""
+
+        // Upload timestamp in Europe/Brussels
+        val uploadTs = LocalDateTime.now(zoneBrussels).format(uploadStampFormatter)
+
+        return UploadHeader(
+            externId = EXTERN_ID,
+            timezoneId = TIMEZONE_ID,
+            bron = BRON,
+            _id = "",
+            tellingId = "",
+            telpostId = telpostId.orEmpty(),
+            beginTijdSec = beginSec.toString(),
+            eindTijdSec = eindSec.toString(),
+
+            tellers = form.tellersNaam.orEmpty(),
+            weer = "",
+            windRichting = form.windrichting.orEmpty(),
+            windKracht = mapWindkrachtToServer(form.windkrachtBft),   // "0".."12"
+            temperatuur = tempRounded,                                // afgerond geheel getal
+            bewolking = mapBewolkingToServer(form.bewolkingAchtsten), // "0".."8"
+            bewolkingHoogte = "",
+            neerslag = form.neerslag.orEmpty(),
+            duurNeerslag = "",
+            zicht = form.zichtKm?.let { safeNum(it) }.orEmpty(),
+            tellersActief = "",
+            tellersAanwezig = "",
+
+            typeTellingCode = typeTellingCode,
+
+            metersNet = "",
+            geluid = "",
+            opmerkingen = buildOpmerkingen(weerOpmerking, form.opmerkingen),
+
+            onlineId = "",
+
+            hydro = "",
+            hpa = form.luchtdrukHpa?.let { safeNum(it) }.orEmpty(),
+            equipment = "",
+
+            uuid = buildUuid(),
+            uploadTijdstip = uploadTs,       // exact "yyyy-MM-dd HH:mm:ss" in Europe/Brussels
+
+            nRec = "",
+            nSoort = "",
+
+            data = emptyList()
         )
     }
 
-    // ======================
-    // Interne bouwlogica
-    // ======================
+    // ---- mapping helpers ----
 
-    private fun buildInternal(
-        form: MetadataForm,
-        beginSec: Long,
-        eindSec: Long,
-        weerOpmerking: String,
-        telpostId: String,
-        onlineId: String,
-        nrec: String,
-        nsoort: String,
-        dataArrayJson: String
-    ): String {
-        // Strings voor numerieke velden (zoals jij het al verstuurde)
-        val tempStr = form.temperatuurC?.roundToInt()?.toString() ?: ""
-        val zichtMetersStr = form.zichtKm?.toInt()?.toString() ?: "" // visibility in meters
-        val hpaStr = form.luchtdrukHpa?.roundToInt()?.toString() ?: ""
-
-        val windrichtingCode = form.windrichting?.let { mapWindrichting(it) } ?: ""
-        val neerslagCode = form.neerslag?.let { mapNeerslag(it) } ?: ""
-        val typeTellingCode = mapTypeTelling(form.typeTelling)
-        val windkrachtStr = mapWindkrachtToIntString(form.windkrachtBft)
-        val bewolkingStr = mapBewolkingAchtsten(form.bewolkingAchtsten)
-
-        val uuid = "Trektellen_Android_1.8.45_${UUID.randomUUID()}"
-
-        // JSON bouwen: enkele velden zijn expliciet "" conform de vorige implementatie
-        val sb = StringBuilder(1024)
-        sb.append('[').append('{')
-        var first = true
-
-        fun add(name: String, value: String) {
-            if (!first) sb.append(',')
-            first = false
-            sb.append('"').append(name).append('"').append(':').append('"').append(escapeJson(value)).append('"')
-        }
-
-        add("externid", "Android App 1.8.45")
-        add("timezoneid", "Europe/Brussels") // wordt "Europe\/Brussels" door escapeJson (forward slash wordt ge-escaped)
-        add("bron", "4")
-        add("_id", "")
-        add("tellingid", "")
-        add("telpostid", telpostId)
-        add("begintijd", beginSec.toString())
-        add("eindtijd", eindSec.toString())
-        add("tellers", form.tellersNaam)
-        add("weer", weerOpmerking)
-        add("windrichting", windrichtingCode)
-        add("windkracht", windkrachtStr)
-        add("temperatuur", tempStr)
-        add("bewolking", bewolkingStr)
-        add("bewolkinghoogte", "")
-        add("neerslag", neerslagCode)
-        add("duurneerslag", "")
-        add("zicht", zichtMetersStr)
-        add("tellersactief", "")
-        add("tellersaanwezig", "")
-        add("typetelling", typeTellingCode)
-        add("metersnet", "")
-        add("geluid", "")
-        add("opmerkingen", form.opmerkingen ?: "")
-        add("onlineid", onlineId)
-        add("HYDRO", "")
-        add("hpa", hpaStr)
-        add("equipment", "")
-        add("uuid", uuid)
-        add("uploadtijdstip", "")
-        add("nrec", nrec)
-        add("nsoort", nsoort)
-
-        // data-array als geldige JSON, dus zonder quotes
-        sb.append(',').append('"').append("data").append('"').append(':').append(dataArrayJson)
-
-        sb.append('}').append(']')
-        return sb.toString()
-    }
-
-    // ======================
-    // Mapping helpers
-    // ======================
-
-    /** Map spinner label -> API code voor typetelling. */
-    private fun mapTypeTelling(label: String): String = when (label.trim().lowercase(Locale.ROOT)) {
-        "alle soorten" -> "all"
-        "zeetrek" -> "sea"
-        "ooievaars en roofvogels" -> "raptor"
-        "landtrek op kusttelpost" -> "coastalvismig"
-        else -> "all"
-    }
-
-    /** Map windrichting weergave (N, NO, ONO, ...) naar API code (n, no, ono, ...) */
-    private fun mapWindrichting(display: String): String {
-        val s = display.trim().lowercase(Locale.ROOT)
-        return s.replace(" ", "")
-    }
-
-    /** Map neerslag label -> API code. */
-    private fun mapNeerslag(label: String): String = when (label.trim().lowercase(Locale.ROOT)) {
-        "geen" -> "geen"
-        "regen" -> "regen"
-        "motregen" -> "motregen"
-        "mist" -> "mist"
-        "hagel" -> "hagel"
-        "sneeuw" -> "sneeuw"
-        "sneeuw- of zandstorm", "sneeuw - of zandstorm", "sneeuw/zandstorm", "sneeuw of zandstorm" -> "sneeuw_zandstorm"
-        "onweer" -> "onweer"
-        else -> ""
+    /** Label → code (“all”, “sea”, …) voor veld "typetelling_trek". Geen match ⇒ leeg. */
+    private fun mapTypeTellingToCode(chosenLabel: String?): String {
+        val label = chosenLabel?.trim().orEmpty()
+        if (label.isEmpty()) return ""
+        val items = CodesJsonReader.getItems("typetelling_trek")
+        val match = items.firstOrNull { it.tekst.equals(label, ignoreCase = true) }
+        return match?.waarde?.takeIf { it.isNotEmpty() } ?: ""
     }
 
     /**
-     * Map windkracht-spinner (“var”, “<1bf”, “1bf”…“11bf”, “>11bf”) → cijfer-string ("0".."12").
-     * Bovengrens >11bf → 12, var en <1bf → 0.
+     * Server verwacht **integer** voor windkracht (als string).
+     * Mapping:
+     *   "var" / "<1bf" -> "0"
+     *   "1bf".."11bf"  -> "1".."11"
+     *   ">11bf"        -> "12"
+     *   Anders (al nummer) → laat door.
      */
-    private fun mapWindkrachtToIntString(label: String?): String {
-        if (label.isNullOrBlank()) return ""
-        val v = label.trim().lowercase(Locale.ROOT)
+    private fun mapWindkrachtToServer(label: String?): String {
+        val raw = label?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        if (raw.isEmpty()) return ""
         return when {
-            v == "var" -> "0"
-            v == "<1bf" -> "0"
-            v == ">11bf" -> "12"
-            v.endsWith("bf") -> {
-                val n = v.removeSuffix("bf").toIntOrNull()
-                if (n == null) "" else n.coerceIn(0, 12).toString()
-            }
-            else -> ""
+            raw == "var" || raw == "<1bf" -> "0"
+            raw == ">11bf" -> "12"
+            raw.endsWith("bf") -> raw.removeSuffix("bf")
+                .toIntOrNull()?.coerceIn(0, 12)?.toString() ?: ""
+            raw.toIntOrNull() != null -> raw // al "0".."12"
+            else -> "" // onbekend → leeg
         }
     }
-
-    /** Map bewolking spinner (“0/8”..“8/8”) → enkel cijfer "0".."8" als string. */
-    private fun mapBewolkingAchtsten(label: String?): String {
-        if (label.isNullOrBlank()) return ""
-        val n = label.substringBefore('/').trim().toIntOrNull() ?: return ""
-        return n.coerceIn(0, 8).toString()
-    }
-
-    // ======================
-    // JSON escape helper
-    // ======================
 
     /**
-     * Minimale JSON escaping:
-     * - Quotes, backslashes en control chars
-     * - **Forward slash** wordt ook ge-escaped → "Europe\/Brussels" (zoals gevraagd)
+     * Server verwacht **0..8** (als string), geen "/8".
+     * Accepteert "3/8" → "3", of al "0".."8".
      */
-    private fun escapeJson(input: String): String {
-        var needs = false
-        for (ch in input) {
-            if (ch == '"' || ch == '\\' || ch == '/' || ch < ' ') { // '/' extra
-                needs = true; break
-            }
-        }
-        if (!needs) return input
-        val out = StringBuilder(input.length + 8)
-        for (ch in input) {
-            when (ch) {
-                '"'  -> out.append("\\\"")
-                '\\' -> out.append("\\\\")
-                '/'  -> out.append("\\/") // optioneel volgens JSON-spec; hier expliciet aangezet
-                '\b' -> out.append("\\b")
-                '\u000C' -> out.append("\\f")
-                '\n' -> out.append("\\n")
-                '\r' -> out.append("\\r")
-                '\t' -> out.append("\\t")
-                else -> {
-                    if (ch < ' ') {
-                        out.append("\\u")
-                        val code = ch.code
-                        out.append(((code shr 12) and 0xF).toHex())
-                        out.append(((code shr 8) and 0xF).toHex())
-                        out.append(((code shr 4) and 0xF).toHex())
-                        out.append((code and 0xF).toHex())
-                    } else {
-                        out.append(ch)
-                    }
-                }
-            }
-        }
-        return out.toString()
+    private fun mapBewolkingToServer(label: String?): String {
+        val raw = label?.trim().orEmpty()
+        if (raw.isEmpty()) return ""
+        val slash = raw.indexOf('/')
+        val head = if (slash >= 0) raw.substring(0, slash) else raw
+        return head.toIntOrNull()?.coerceIn(0, 8)?.toString() ?: ""
     }
 
-    private fun Int.toHex(): Char = "0123456789abcdef"[this]
+    /** UUID in gewenst formaat, zonder versienaam. */
+    private fun buildUuid(): String = "Trektellen_Android_${UUID.randomUUID()}"
+
+    /** Locale-neutrale nummerstring zonder overbodige decimalen. */
+    private fun safeNum(d: Double): String {
+        val s = String.format(Locale.US, "%.3f", d).trimEnd('0').trimEnd('.')
+        return s
+    }
+
+    private fun buildOpmerkingen(weerOpmerking: String, extra: String): String {
+        val a = weerOpmerking.trim()
+        val b = extra.trim()
+        return when {
+            a.isEmpty() && b.isEmpty() -> ""
+            a.isNotEmpty() && b.isEmpty() -> a
+            a.isEmpty() && b.isNotEmpty() -> b
+            else -> "$a — $b"
+        }
+    }
 }

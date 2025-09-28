@@ -4,7 +4,6 @@ import android.app.Dialog
 import android.os.Bundle
 import android.text.InputFilter
 import android.text.InputType
-import android.view.View
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -19,7 +18,7 @@ import com.yvesds.voicetally4.ui.tally.TallyViewModel
 /**
  * Eenvoudige aanpas-dialog voor één soort:
  * - Toont displayName (of canonical)
- * - [+] [-] [reset] knoppen
+ * - [-] [reset] [+] knoppen (reset zet naar 0 via setCount)
  * - Directe invoer van een nieuw aantal
  * - OK schrijft via TallyViewModel.setCount(...)
  *
@@ -79,7 +78,8 @@ class SpeciesAdjustDialogFragment : DialogFragment() {
             btnDec.setOnClickListener { bump(-1) }
             btnInc.setOnClickListener { bump(+1) }
             btnRst.setOnClickListener {
-                tallyVm.reset(canonical)
+                // Geen reset() meer in VM; we zetten gewoon naar 0
+                tallyVm.setCount(canonical, 0)
                 countView.text = "Huidig: 0"
             }
 
@@ -103,6 +103,7 @@ class SpeciesAdjustDialogFragment : DialogFragment() {
                     val number = txt.toIntOrNull()
                     if (number != null && number >= 0) {
                         tallyVm.setCount(canonical, number)
+                        // label updaten is niet strikt nodig; VM publiceert naar de lijst
                     }
                 }
             }

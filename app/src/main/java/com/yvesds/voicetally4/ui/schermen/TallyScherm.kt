@@ -1,16 +1,19 @@
 package com.yvesds.voicetally4.ui.schermen
 
 import android.os.Bundle
+import android.util.DisplayMetrics
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import androidx.core.view.doOnLayout
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.yvesds.voicetally4.databinding.FragmentTallySchermBinding
 import com.yvesds.voicetally4.ui.adapters.SpeechLogAdapter
@@ -19,14 +22,12 @@ import com.yvesds.voicetally4.ui.shared.SharedSpeciesViewModel
 import com.yvesds.voicetally4.ui.tally.TallyViewModel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlin.math.max
 
 /**
- * VT3-look & feel in VT4:
- * - Logvenster boven (met border in layout)
- * - 3 knoppen: Save / Add / Export
- * - Tellers onderaan (displayName = tile name)
- *
- * Belangrijk: TallyViewModel is no-arg en wordt gevoed vanuit SharedSpeciesViewModel.
+ * Tellers als tiles (zonder +/-/reset op de tile):
+ * tik op tile => later detail-popup of -scherm.
+ * Namen komen uit UnifiedAliasStore (tileName), niet uit canonical.
  */
 class TallyScherm : Fragment() {
 
@@ -34,10 +35,11 @@ class TallyScherm : Fragment() {
     private val binding get() = _binding!!
 
     private val sharedVm: SharedSpeciesViewModel by activityViewModels()
-    private val tallyVm: TallyViewModel by viewModels() // no-arg VM
+    private val tallyVm: TallyViewModel by viewModels()
 
     private lateinit var tallyAdapter: TallyAdapter
     private lateinit var logAdapter: SpeechLogAdapter
+    private var gridLayoutManager: GridLayoutManager? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -51,7 +53,7 @@ class TallyScherm : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Log venster (bovenaan)
+        // Log venster
         logAdapter = SpeechLogAdapter()
         binding.recyclerViewSpeechLog.apply {
             layoutManager = LinearLayoutManager(requireContext())
@@ -60,19 +62,35 @@ class TallyScherm : Fragment() {
         }
         logAdapter.setAll(listOf("ℹ️ Klaar voor telling…"))
 
-        // Tellers
-        tallyAdapter = TallyAdapter(
-            onIncrement = { canonical -> tallyVm.increment(canonical) },
-            onDecrement = { canonical -> tallyVm.decrement(canonical) },
-            onReset     = { canonical -> tallyVm.reset(canonical) }
+        // Tiles in grid
+        val spanCount = calculateAutoSpanCount(
+            resources.displayMetrics,
+            binding.tallyRoot.paddingStart + binding.tallyRoot.paddingEnd,
+            minTileWidthDp = 120f
         )
-        binding.recyclerViewTally.apply {
-            layoutManager = LinearLayoutManager(requireContext())
-            adapter = tallyAdapter
-            setHasFixedSize(true)
+        gridLayoutManager = GridLayoutManager(requireContext(), spanCount).also {
+            binding.recyclerViewTally.layoutManager = it
         }
+        binding.recyclerViewTally.setHasFixedSize(true)
+        binding.recyclerViewTally.itemAnimator = null
+        binding.recyclerViewTally.setItemViewCacheSize(128)
+        binding.recyclerViewTally.addOnLayoutChangeListener { v, l, t, r, b, ol, ot, orr, ob ->
+            val wChanged = (r - l) != (orr - ol)
+            val hChanged = (b - t) != (ob - ot)
+            if (wChanged || hChanged) recalcSpanCount()
+        }
+        binding.recyclerViewTally.doOnLayout { recalcSpanCount() }
 
-        // Koppel Shared → Tally
+        tallyAdapter = TallyAdapter(
+            onTileClick = { speciesId ->
+                // Later: open jouw detail-dialoog of -scherm
+                logAdapter.add("ℹ️ Details voor $speciesId")
+                Toast.makeText(requireContext(), "Details voor $speciesId", Toast.LENGTH_SHORT).show()
+            }
+        )
+        binding.recyclerViewTally.adapter = tallyAdapter
+
+        // Koppel Shared → Tally (blijft zoals voorheen)
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
@@ -90,7 +108,7 @@ class TallyScherm : Fragment() {
             }
         }
 
-        // Observe items → adapter
+        // Items rechtstreeks doorzetten naar adapter (geen reflectie)
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
@@ -116,8 +134,32 @@ class TallyScherm : Fragment() {
         }
     }
 
+    private fun calculateAutoSpanCount(
+        dm: DisplayMetrics,
+        rootHorizontalPaddingPx: Int,
+        minTileWidthDp: Float
+    ): Int {
+        val minTilePx = (minTileWidthDp * dm.density).toInt().coerceAtLeast(1)
+        val screenPx = dm.widthPixels - rootHorizontalPaddingPx
+        return max(1, screenPx / minTilePx)
+    }
+
+    private fun recalcSpanCount() {
+        val glm = gridLayoutManager ?: return
+        val newSpan = calculateAutoSpanCount(
+            resources.displayMetrics,
+            rootHorizontalPaddingPx = binding.tallyRoot.paddingStart + binding.tallyRoot.paddingEnd,
+            minTileWidthDp = 120f
+        )
+        if (glm.spanCount != newSpan) {
+            glm.spanCount = newSpan
+            binding.recyclerViewTally.requestLayout()
+        }
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
         _binding = null
+        gridLayoutManager = null
     }
 }

@@ -1,93 +1,123 @@
 package com.yvesds.voicetally4.ui.tally
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.yvesds.voicetally4.ui.adapters.TallyItem
+import com.yvesds.voicetally4.ui.data.UnifiedAliasStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
- * No-arg ViewModel (lifecycle-correct, bewaart state over rotaties).
- * - Ontvangt selectie & display-namen via setSelection(...) vanuit het Fragment.
- * - Beheert counts per canonical en expose't lijstitems met displayName (tile-name).
+ * TallyViewModel (light):
+ *
+ * - Één bron: UnifiedAliasStore (speciesId ↔ displayName/canonical).
+ * - Houdt tellingen per *canonical* bij (compatibel met jouw bestaande flow).
+ * - Public API (alleen wat we nu nodig hebben):
+ *      setSelection(canonicals, displayMap)
+ *      getCount(canonical)
+ *      setCount(canonical, value)
+ * - items: StateFlow<List<TallyItem>> voor de adapter (tile weergave).
+ *
+ * Geen increment/decrement/reset meer — we werken via detail-popup (setCount).
  */
-class TallyViewModel : ViewModel() {
+class TallyViewModel(app: Application) : AndroidViewModel(app) {
 
-    data class TallyItem(
+    private data class Row(
         val canonical: String,
-        val displayName: String,
-        val count: Int
+        var speciesId: String,   // uit store (fallback: canonical)
+        var displayName: String, // tileName; primair store, fallback displayMap/canonical
+        var count: Int
     )
 
-    private val selectedCanonicals = MutableStateFlow<List<String>>(emptyList())
-    private val displayNames = MutableStateFlow<Map<String, String>>(emptyMap())
-    private val counts = MutableStateFlow<Map<String, Int>>(emptyMap())
+    private val rowsByCanonical = LinkedHashMap<String, Row>(64)
 
-    /** Lijst voor de adapter (volgorde = volgorde van selectie). */
-    val items: StateFlow<List<TallyItem>> =
-        combine(selectedCanonicals, displayNames, counts) { canonicals, displayMap, curCounts ->
-            canonicals.map { canonical ->
-                val name = displayMap[canonical] ?: canonical
-                val c = curCounts[canonical] ?: 0
-                TallyItem(canonical = canonical, displayName = name, count = c)
-            }
-        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    private val _items = MutableStateFlow<List<TallyItem>>(emptyList())
+    val items: StateFlow<List<TallyItem>> = _items
 
-    /** Wordt door het Fragment aangeroepen wanneer SharedSpeciesViewModel verandert. */
+    /**
+     * Pas de (nieuwe) selectie toe.
+     * - Bestaande counts blijven behouden voor overlappende items.
+     * - DisplayName/Id worden ververst vanuit de store.
+     */
     fun setSelection(canonicals: List<String>, displayMap: Map<String, String>) {
-        selectedCanonicals.value = canonicals.distinct()
-        displayNames.value = displayMap
-        // Zorg dat verdwenen soorten niet blijven hangen in counts
-        val allowed = selectedCanonicals.value.toSet()
-        val cur = counts.value
-        if (cur.keys.any { it !in allowed }) {
-            counts.value = cur.filterKeys { it in allowed }
-        }
-        // Zorg dat nieuwe keys een startwaarde hebben (0) zonder bestaande waarden te overschrijven
-        if (allowed.isNotEmpty()) {
-            val next = cur.toMutableMap()
-            for (c in allowed) if (c !in next) next[c] = 0
-            counts.value = next
-        }
-    }
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                UnifiedAliasStore.ensureReady(getApplication())
+            }
 
-    fun increment(canonical: String) = viewModelScope.launch {
-        val cur = counts.value
-        val next = (cur[canonical] ?: 0) + 1
-        counts.value = cur.toMutableMap().apply { put(canonical, next) }
-    }
+            val keepSet = canonicals.toHashSet()
+            val kept = LinkedHashMap<String, Row>(canonicals.size)
 
-    fun decrement(canonical: String) = viewModelScope.launch {
-        val cur = counts.value
-        val next = (cur[canonical] ?: 0) - 1
-        counts.value = cur.toMutableMap().apply { put(canonical, next.coerceAtLeast(0)) }
-    }
+            // behoud bestaande die nog in de selectie zitten
+            for ((canon, row) in rowsByCanonical) {
+                if (canon in keepSet) kept[canon] = row
+            }
 
-    fun reset(canonical: String) = viewModelScope.launch {
-        val cur = counts.value
-        if (cur.containsKey(canonical)) {
-            counts.value = cur.toMutableMap().apply { put(canonical, 0) }
-        }
-    }
+            // voeg nieuw toe / refresh naam & id
+            for (canon in canonicals) {
+                val existing = kept[canon]
+                if (existing == null) {
+                    val (speciesId, displayName) = resolveIdAndName(canon, displayMap)
+                    kept[canon] = Row(
+                        canonical = canon,
+                        speciesId = speciesId,
+                        displayName = displayName,
+                        count = 0
+                    )
+                } else {
+                    val (speciesId, displayName) = resolveIdAndName(canon, displayMap)
+                    existing.speciesId = speciesId
+                    existing.displayName = displayName
+                }
+            }
 
-    /** Door dialog gebruikt om rechtstreeks te zetten. */
-    fun setCount(canonical: String, count: Int) = viewModelScope.launch {
-        val cur = counts.value
-        if (cur.containsKey(canonical)) {
-            counts.value = cur.toMutableMap().apply { put(canonical, count.coerceAtLeast(0)) }
-        } else {
-            // Als canonical nog niet bestond maar nu gezet wordt, initialiseer dan.
-            counts.value = cur.toMutableMap().apply { put(canonical, count.coerceAtLeast(0)) }
+            rowsByCanonical.clear()
+            rowsByCanonical.putAll(kept)
+            publishItems()
         }
     }
 
-    /** Handig voor dialog om huidige waarde op te halen. */
-    fun getCount(canonical: String): Int = counts.value[canonical] ?: 0
+    /** Huidig aantal voor canonical (of 0 als onbekend). */
+    fun getCount(canonical: String): Int {
+        return rowsByCanonical[canonical]?.count ?: 0
+    }
 
-    fun clearAll() = viewModelScope.launch {
-        counts.value = emptyMap()
+    /** Zet exact aantal voor canonical (min 0). */
+    fun setCount(canonical: String, value: Int) {
+        val row = rowsByCanonical[canonical] ?: return
+        row.count = value.coerceAtLeast(0)
+        publishItems()
+    }
+
+    // -------------------- helpers --------------------
+
+    private fun resolveIdAndName(
+        canonical: String,
+        displayMap: Map<String, String>
+    ): Pair<String, String> {
+        val tile = UnifiedAliasStore.allTiles().firstOrNull { it.canonical == canonical }
+        val speciesId = tile?.speciesId ?: canonical
+        val displayName = tile?.displayName ?: (displayMap[canonical] ?: canonical)
+        return speciesId to displayName
+    }
+
+    private fun publishItems() {
+        if (rowsByCanonical.isEmpty()) {
+            _items.value = emptyList()
+            return
+        }
+        val out = ArrayList<TallyItem>(rowsByCanonical.size)
+        for ((_, r) in rowsByCanonical) {
+            out += TallyItem(
+                speciesId = r.speciesId,
+                name = r.displayName,
+                count = r.count
+            )
+        }
+        _items.value = out
     }
 }

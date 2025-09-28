@@ -1,89 +1,92 @@
-package com.yvesds.voicetally4.data.export
+package com.yvesds.voicetally4.utils.upload
 
-import org.json.JSONArray
-import org.json.JSONObject
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 
 /**
- * Data-klassen voor upload naar /api/counts_save.
- * We serialiseren bewust handmatig (geen extra libs vereist).
+ * Upload “envelope”: de server verwacht een JSON array met één object.
+ * Voor nu sturen we enkel de header en laten we data[] leeg.
  */
+typealias UploadEnvelope = List<UploadHeader>
 
-data class SessionExport(
-    val externid: String,
-    val timezoneid: String,
-    val bron: String,
-    val idLocal: String,          // "_id" (leeg laten)
-    val tellingIdLocal: String,   // "tellingid" (leeg laten)
-    val telpostid: String,
-    val begintijd: String,        // epoch sec als string
-    val eindtijd: String,         // epoch sec als string (dummy = +60s)
-    val tellers: String,
-    val weer: String,
-    val windrichting: String,
-    val windkracht: String,
-    val temperatuur: String,
-    val bewolking: String,
-    val bewolkinghoogte: String,
-    val neerslag: String,
-    val duurneerslag: String,
-    val zicht: String,
-    val tellersactief: String,
-    val tellersaanwezig: String,
-    val typetelling: String,      // ⚠️ servercode (via CodesRepository)
-    val metersnet: String,
-    val geluid: String,
-    val opmerkingen: String,
-    val onlineid: String,
-    val hydro: String,
-    val hpa: String,
-    val equipment: String,
-    val uuid: String,
-    val uploadtijdstip: String,
-    val nrec: String,
-    val nsoort: String,
-    val dataArray: JSONArray
-) {
-    fun toJsonObject(): JSONObject = JSONObject().apply {
-        put("externid", externid)
-        put("timezoneid", timezoneid)
-        put("bron", bron)
-        put("_id", idLocal)
-        put("tellingid", tellingIdLocal)
-        put("telpostid", telpostid)
-        put("begintijd", begintijd)
-        put("eindtijd", eindtijd)
-        put("tellers", tellers)
-        put("weer", weer)
-        put("windrichting", windrichting)
-        put("windkracht", windkracht)
-        put("temperatuur", temperatuur)
-        put("bewolking", bewolking)
-        put("bewolkinghoogte", bewolkinghoogte)
-        put("neerslag", neerslag)
-        put("duurneerslag", duurneerslag)
-        put("zicht", zicht)
-        put("tellersactief", tellersactief)
-        put("tellersaanwezig", tellersaanwezig)
-        put("typetelling", typetelling)
-        put("metersnet", metersnet)
-        put("geluid", geluid)
-        put("opmerkingen", opmerkingen)
-        put("onlineid", onlineid)
-        put("HYDRO", hydro)
-        put("hpa", hpa)
-        put("equipment", equipment)
-        put("uuid", uuid)
-        put("uploadtijdstip", uploadtijdstip)
-        put("nrec", nrec)
-        put("nsoort", nsoort)
-        put("data", dataArray)
-    }
-}
+@Serializable
+data class UploadHeader(
+    @SerialName("externid") val externId: String = "",
+    @SerialName("timezoneid") val timezoneId: String = "",
+    @SerialName("bron") val bron: String = "2",                 // 2 = Android (conform huidig gebruik)
+    @SerialName("_id") val _id: String = "",                    // lokale (tijdelijke) id; leeg laten
+    @SerialName("tellingid") val tellingId: String = "",        // idem; server kan dit teruggeven
+    @SerialName("telpostid") val telpostId: String = "",
+    @SerialName("begintijd") val beginTijdSec: String = "",     // epoch sec (string)
+    @SerialName("eindtijd") val eindTijdSec: String = "",       // epoch sec (string)
 
-data class ExportPayload(
-    val sessions: List<SessionExport>
-) {
-    fun toJsonArray(): JSONArray = JSONArray().apply { sessions.forEach { put(it.toJsonObject()) } }
-    fun toJsonString(pretty: Boolean = true): String =
-        if (pretty) toJsonArray().toString(2) else toJsonArray().toString()
-}
+    @SerialName("tellers") val tellers: String = "",
+    @SerialName("weer") val weer: String = "",
+    @SerialName("windrichting") val windRichting: String = "",
+    @SerialName("windkracht") val windKracht: String = "",
+    @SerialName("temperatuur") val temperatuur: String = "",
+    @SerialName("bewolking") val bewolking: String = "",
+    @SerialName("bewolkinghoogte") val bewolkingHoogte: String = "",
+    @SerialName("neerslag") val neerslag: String = "",
+    @SerialName("duurneerslag") val duurNeerslag: String = "",
+    @SerialName("zicht") val zicht: String = "",
+    @SerialName("tellersactief") val tellersActief: String = "",
+    @SerialName("tellersaanwezig") val tellersAanwezig: String = "",
+
+    // Belangrijk: typetelling is de CODE (“all” / “sea” / …), niet het label.
+    @SerialName("typetelling") val typeTellingCode: String = "",
+
+    @SerialName("metersnet") val metersNet: String = "",
+    @SerialName("geluid") val geluid: String = "",
+    @SerialName("opmerkingen") val opmerkingen: String = "",
+
+    // Door server gezet; in start-payload leeg laten
+    @SerialName("onlineid") val onlineId: String = "",
+
+    @SerialName("HYDRO") val hydro: String = "",
+    @SerialName("hpa") val hpa: String = "",
+    @SerialName("equipment") val equipment: String = "",
+
+    @SerialName("uuid") val uuid: String = "",
+    @SerialName("uploadtijdstip") val uploadTijdstip: String = "",
+
+    // Voor nu expliciet leeg laten zoals gevraagd
+    @SerialName("nrec") val nRec: String = "",
+    @SerialName("nsoort") val nSoort: String = "",
+
+    @SerialName("data") val data: List<UploadRecord> = emptyList()
+)
+
+/**
+ * Recordmodel voor volledigheid – we sturen ze nu NIET mee (data = []).
+ * Deze velden zijn afgeleid uit het voorbeeldbestand.
+ */
+@Serializable
+data class UploadRecord(
+    @SerialName("_id") val _id: String = "",
+    @SerialName("tellingid") val tellingId: String = "",
+    @SerialName("soortid") val soortId: String = "",
+    @SerialName("aantal") val aantal: String = "",
+    @SerialName("richting") val richting: String = "",
+    @SerialName("aantalterug") val aantalTerug: String = "",
+    @SerialName("richtingterug") val richtingTerug: String = "",
+    @SerialName("sightingdirection") val sightingDirection: String = "",
+    @SerialName("lokaal") val lokaal: String = "",
+    @SerialName("aantal_plus") val aantalPlus: String = "",
+    @SerialName("aantalterug_plus") val aantalTerugPlus: String = "",
+    @SerialName("lokaal_plus") val lokaalPlus: String = "",
+    @SerialName("markeren") val markeren: String = "",
+    @SerialName("markerenlokaal") val markerenLokaal: String = "",
+    @SerialName("geslacht") val geslacht: String = "",
+    @SerialName("leeftijd") val leeftijd: String = "",
+    @SerialName("kleed") val kleed: String = "",
+    @SerialName("opmerkingen") val opmerkingen: String = "",
+    @SerialName("trektype") val trekType: String = "",
+    @SerialName("teltype") val telType: String = "",
+    @SerialName("location") val location: String = "",
+    @SerialName("height") val height: String = "",
+    @SerialName("tijdstip") val tijdstipSec: String = "",      // epoch sec (string)
+    @SerialName("groupid") val groupId: String = "",
+    @SerialName("uploadtijdstip") val uploadTijdstip: String = "",
+    @SerialName("totaalaantal") val totaalAantal: String = ""
+)

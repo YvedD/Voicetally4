@@ -6,7 +6,6 @@
     android:layout_height="wrap_content"
     android:layout_margin="1dp"
     android:foreground="?attr/selectableItemBackground"
-    app:cardUseCompatPadding="true"
     app:strokeColor="?attr/colorTappableOutline"
     app:strokeWidth="@dimen/tappable_stroke_1">
 
@@ -18,6 +17,7 @@
         android:paddingHorizontal="10dp"
         android:paddingVertical="8dp">
 
+        <!-- Tile-naam -->
         <TextView
             android:id="@+id/tvSpeciesName"
             android:layout_width="match_parent"
@@ -28,6 +28,7 @@
             android:textColor="#FDFCFC"
             android:textStyle="normal" />
 
+        <!-- Count onder de naam -->
         <TextView
             android:id="@+id/tvSpeciesCount"
             android:layout_width="wrap_content"

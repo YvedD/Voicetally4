@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.location.Location
 import android.location.LocationManager
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -121,9 +122,6 @@ class MetadataScherm : Fragment() {
             hookWeatherButton()
             setupTypeTellingSpinnerJsonFirst()
         }
-        android.util.Log.d("CodesJsonReader", CodesJsonReader.debugSummary("typetelling_trek"))
-        android.util.Log.d("CodesJsonReader", CodesJsonReader.debugSummary("wind"))
-        android.util.Log.d("CodesJsonReader", CodesJsonReader.debugSummary("neerslag"))
 
         setupBottomBar()
     }
@@ -132,13 +130,11 @@ class MetadataScherm : Fragment() {
         ViewCompat.setOnApplyWindowInsetsListener(binding.rootConstraint) { _, insets ->
             val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
 
-            // Veilig margins aanpassen indien mogelijk; anders padding-fallback
             val lp = binding.bottomBar.layoutParams
             if (lp is ViewGroup.MarginLayoutParams) {
                 lp.bottomMargin = sys.bottom
                 binding.bottomBar.layoutParams = lp
             } else {
-                // Fallback: extra bottom padding toevoegen
                 val p = binding.bottomBar.paddingBottom
                 binding.bottomBar.setPadding(
                     binding.bottomBar.paddingLeft,
@@ -239,7 +235,6 @@ class MetadataScherm : Fragment() {
         minuteCol.addView(lblMinute)
         minuteCol.addView(minutePicker)
 
-        // Hour<->Minute overlopen
         minutePicker.setOnValueChangedListener { _, oldVal, newVal ->
             if (oldVal == 59 && newVal == 0) {
                 hourPicker.value = (hourPicker.value + 1) % 24
@@ -330,7 +325,6 @@ class MetadataScherm : Fragment() {
 
     // region Weer (JSON-first voor wind & neerslag)
     private fun setupWeatherSpinnersJsonFirst() {
-        // Windrichting
         val windLabels = CodesJsonReader.getLabels("wind")
         val windAdapter = if (windLabels.isNotEmpty())
             ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, windLabels)
@@ -342,7 +336,6 @@ class MetadataScherm : Fragment() {
             )
         binding.acWindrichting.setAdapter(windAdapter)
 
-        // Bewolking (arrays.xml)
         binding.acBewolking.setAdapter(
             ArrayAdapter(
                 requireContext(),
@@ -351,7 +344,6 @@ class MetadataScherm : Fragment() {
             )
         )
 
-        // Neerslag
         val rainLabels = CodesJsonReader.getLabels("neerslag")
         val rainAdapter = if (rainLabels.isNotEmpty())
             ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, rainLabels)
@@ -363,7 +355,6 @@ class MetadataScherm : Fragment() {
             )
         binding.acNeerslag.setAdapter(rainAdapter)
 
-        // Windkracht (arrays.xml)
         binding.acWindkracht.setAdapter(
             ArrayAdapter(
                 requireContext(),
@@ -483,9 +474,37 @@ class MetadataScherm : Fragment() {
                 val form = collectForm()
 
                 lifecycleScope.launch(Dispatchers.IO) {
+                    // Forceer: eind == begin (epoch seconds op basis van de gekozen tijd)
                     val beginSec = (form.datumEpochMillis / 1000L)
                     val eindSec = beginSec
 
+                    // 1) DEBUG HEADER (pretty) voor log én bestand
+                    val debugHeader = CountsPayloadBuilder.buildStartPretty(
+                        form = form,
+                        beginSec = beginSec,
+                        eindSec = eindSec,
+                        weerOpmerking = b.etWeerOpmerking.text?.toString()?.trim().orEmpty(),
+                        telpostId = form.telpostCode
+                    )
+                    Log.d("CountsUpload", "HEADER:\n$debugHeader")
+
+                    // SAVE DEBUG HEADER → serverdata
+                    val headerPath = try {
+                        StorageUtils.saveStringToPublicDocuments(
+                            context = requireContext(),
+                            subDir = "serverdata",
+                            fileName = "counts_save_header_debug.json",
+                            content = debugHeader
+                        )
+                        "${StorageUtils.getPublicAppDir(requireContext(), "serverdata").absolutePath}/counts_save_header_debug.json"
+                    } catch (_: Throwable) {
+                        null
+                    }
+                    if (headerPath != null) {
+                        Log.d("CountsUpload", "Header opgeslagen als: $headerPath")
+                    }
+
+                    // 2) Compacte payload voor de POST
                     val payload = CountsPayloadBuilder.buildStart(
                         form = form,
                         beginSec = beginSec,
@@ -518,28 +537,28 @@ class MetadataScherm : Fragment() {
                                 }"
                             )
                         } else {
-                            val body = response.body
-                            val nok = body.contains("\"NOK\"", ignoreCase = true) || body.contains(">NOK<", ignoreCase = true)
-                            if (nok) {
-                                showErrorDialog("Server NOK", body.take(4000))
-                            } else {
-                                val (onlineId, tellingId) = parseIdsFromCountsSaveResponse(body)
+                            // Nieuw: toon "Telling OK ! : <onlineid>" bij OK/message
+                            val (ok, onlineId, tellingId) = parseOkAndIds(response.body)
+                            if (ok && onlineId != null) {
                                 requireContext().getSharedPreferences(uploadPrefs, Context.MODE_PRIVATE).edit {
-                                    onlineId?.let { putString(keyOnlineId, it) }
+                                    putString(keyOnlineId, onlineId)
                                     tellingId?.let { putString(keyTellingId, it) }
                                 }
-                                val msg = buildString {
-                                    if (onlineId != null) {
-                                        append(getString(R.string.telling_started_id, onlineId))
-                                    } else {
-                                        append(getString(R.string.telling_started_generic))
-                                    }
-                                    savedPath?.let { append("\n").append(getString(R.string.response_saved_at, it)) }
+                                Snackbar.make(bind.root, "Telling OK ! : $onlineId", Snackbar.LENGTH_LONG)
+                                    .setAnchorView(bind.bottomBar)
+                                    .show()
+                                findNavController().navigate(R.id.action_metadataScherm_to_soortSelectieScherm)
+                            } else {
+                                val (online, telling) = parseIdsFromCountsSaveResponse(response.body)
+                                requireContext().getSharedPreferences(uploadPrefs, Context.MODE_PRIVATE).edit {
+                                    online?.let { putString(keyOnlineId, it) }
+                                    telling?.let { putString(keyTellingId, it) }
                                 }
+                                val msg = if (online != null) "Telling OK ! : $online"
+                                else getString(R.string.telling_started_generic)
                                 Snackbar.make(bind.root, msg, Snackbar.LENGTH_LONG)
                                     .setAnchorView(bind.bottomBar)
                                     .show()
-
                                 findNavController().navigate(R.id.action_metadataScherm_to_soortSelectieScherm)
                             }
                         }
@@ -650,6 +669,36 @@ class MetadataScherm : Fragment() {
     // endregion
 
     // region Response parsing & dialogs
+    /**
+     * Herkent expliciet de OK-structuur:
+     * {"json":[{"message":"OK","gelukt_array":[{"id":"","onlineid":3176863}], ...}]}
+     * Retourneert Triple<ok, onlineId, tellingId>.
+     */
+    private fun parseOkAndIds(body: String): Triple<Boolean, String?, String?> {
+        return try {
+            val root = JSONObject(body)
+            val arr = root.optJSONArray("json") ?: return Triple(false, null, null)
+            if (arr.length() == 0) return Triple(false, null, null)
+            val first = arr.getJSONObject(0)
+            val msg = first.optString("message", "")
+            val ok = msg.equals("OK", ignoreCase = true)
+            var onlineId: String? = null
+            var tellingId: String? = null
+            val geluktArr: JSONArray? = first.optJSONArray("gelukt_array")
+            if (geluktArr != null && geluktArr.length() > 0) {
+                val firstOk = geluktArr.getJSONObject(0)
+                onlineId = firstOk.optString("onlineid", "").ifBlank { null }
+                tellingId = firstOk.optString("tellingid", "").ifBlank { null }
+            } else {
+                onlineId = first.optString("onlineid", "").ifBlank { null }
+                tellingId = first.optString("tellingid", "").ifBlank { null }
+            }
+            Triple(ok, onlineId, tellingId)
+        } catch (_: Throwable) {
+            Triple(false, null, null)
+        }
+    }
+
     private fun parseIdsFromCountsSaveResponse(body: String): Pair<String?, String?> {
         return try {
             val root = JSONObject(body)
