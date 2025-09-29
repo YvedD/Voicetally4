@@ -33,8 +33,8 @@ import kotlin.math.max
 
 /**
  * Soortselectie met snelle grid (tiles):
- * - Tiles tonen displayName (tileName) uit UnifiedAliasStore via SoortSelectieViewModel.
- * - Selectiestatus en OK-actie blijven zoals in jouw oorspronkelijke code.
+ * - Tile-tekst = canonical (altijd), selectie gebeurt op canonical.
+ * - displayName (tileName uit store) blijft beschikbaar voor Tally.
  * - SAF-koppeling (Documents) blijft identiek, met herladen na toestemming.
  */
 class SoortSelectieScherm : Fragment() {
@@ -89,11 +89,11 @@ class SoortSelectieScherm : Fragment() {
         binding.recycler.itemAnimator = null
         binding.recycler.setItemViewCacheSize(128)
 
+        // ⚠️ Selectie op CANONICAL
         adapter = AliasTileAdapter(
-            isSelected = { tileName -> viewModel.isSelected(tileName) },
-            onToggle = { tileName ->
-                viewModel.toggleSelection(tileName)
-                // Snelle herbind van selectie-state via payload in de adapter
+            isSelected = { canonical -> viewModel.isSelected(canonical) },
+            onToggle = { canonical ->
+                viewModel.toggleSelection(canonical)
                 updateSelectionStatus()
             }
         )
@@ -106,10 +106,10 @@ class SoortSelectieScherm : Fragment() {
             }
         }
 
-        // Start load (UnifiedAliasStore onderliggend)
+        // Start load
         viewModel.loadAliases()
 
-        // OK: schrijf selectie naar gedeelde VM en navigeer naar Tally
+        // OK → deel geselecteerde canonicals + displayMap naar Shared VM en ga naar Tally
         binding.btnOk.setOnClickListener {
             val (chosenCanonical, displayMap) = buildSelectionAndDisplayMap()
             sharedVm.setSelectedSpecies(chosenCanonical)
@@ -129,12 +129,13 @@ class SoortSelectieScherm : Fragment() {
             }
 
             is UiState.Success -> {
+                // We geven de adapter als "tileName" de CANONICAL, zodat de tegel dit toont
+                // en zodat selectie-key = canonical is.
                 val tiles: List<SoortAlias> = state.items.map {
-                    // ViewModel levert: soortId, canonical, tileName
                     SoortAlias(
                         soortId = it.soortId,
                         canonical = it.canonical,
-                        tileName = it.tileName,
+                        tileName = it.canonical,   // ← tonen & selecteren op canonical
                         aliases = it.aliases
                     )
                 }
@@ -173,19 +174,22 @@ class SoortSelectieScherm : Fragment() {
         pickTreeLauncher.launch(intent)
     }
 
-    /** Huidige selectie als (canonicals, displayMap). */
+    /**
+     * Huidige selectie:
+     * - canonicals (lijst) voor Tally
+     * - displayMap: canonical -> display tileName (zoals uit de store)
+     *
+     * Let op: uiState houdt nog de *oorspronkelijke* records bij waar
+     * it.tileName = displayName. We filteren met isSelected(it.canonical).
+     */
     private fun buildSelectionAndDisplayMap(): Pair<List<String>, Map<String, String>> {
         val state = viewModel.uiState.value
         if (state !is UiState.Success) return emptyList<String>() to emptyMap()
 
-        // Selectie is gebaseerd op tileName (zoals voorheen)
-        val selected = state.items.filter { viewModel.isSelected(it.tileName) }
+        val selected = state.items.filter { viewModel.isSelected(it.canonical) }
 
-        // canonicals voor downstream (Tally VM gebruikt deze al)
         val chosenCanonical = selected.map { it.canonical }
-
-        // mapping canonical -> tileName (displayname)
-        val displayMap = selected.associate { it.canonical to it.tileName }
+        val displayMap = selected.associate { it.canonical to it.tileName } // display = tileName uit store
         return chosenCanonical to displayMap
     }
 

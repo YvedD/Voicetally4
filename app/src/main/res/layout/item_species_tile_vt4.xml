@@ -17,12 +17,17 @@
         android:paddingHorizontal="10dp"
         android:paddingVertical="8dp">
 
-        <!-- Tile-naam -->
+        <!-- Soortnaam (2 regels max, auto-size, ellipsize) -->
         <TextView
             android:id="@+id/tvSpeciesName"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:maxLines="2"
+            android:ellipsize="end"
+            android:autoSizeTextType="uniform"
+            android:autoSizeMinTextSize="10sp"
+            android:autoSizeMaxTextSize="14sp"
+            android:autoSizeStepGranularity="1sp"
             android:text="soortnaam"
             android:textAppearance="@style/TextAppearance.AppCompat.Small"
             android:textColor="#FDFCFC"

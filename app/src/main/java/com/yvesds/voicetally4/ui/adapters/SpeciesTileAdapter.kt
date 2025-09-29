@@ -4,38 +4,20 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
-import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.card.MaterialCardView
 import com.yvesds.voicetally4.R
+import com.yvesds.voicetally4.ui.data.SpeciesTile
 
-/**
- * VT3-achtige tegelweergave: per soort één compacte "tile"
- * met duidelijk zichtbare weergavenaam (aliasmapping kolom 2) en huidig aantal.
- *
- * - Klik op de tile: open de aanpas-popup (geregeld door caller via onItemClick).
- * - displayNameOf: lambda die de juiste weergavenaam levert op basis van canonieke soort.
- */
 class SpeciesTileAdapter(
-    private val onItemClick: (speciesCanonical: String) -> Unit,
-    private val displayNameOf: (speciesCanonical: String) -> String = { it }
+    private var items: List<SpeciesTile>,
+    private val onClick: (SpeciesTile) -> Unit
 ) : RecyclerView.Adapter<SpeciesTileAdapter.VH>() {
 
-    data class Tile(val speciesCanonical: String, val count: Int)
-
-    private val items = ArrayList<Tile>()
-
-    fun submit(newItems: List<Tile>) {
-        val diff = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
-            override fun getOldListSize() = items.size
-            override fun getNewListSize() = newItems.size
-            override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int) =
-                items[oldItemPosition].speciesCanonical == newItems[newItemPosition].speciesCanonical
-            override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int) =
-                items[oldItemPosition] == newItems[newItemPosition]
-        })
-        items.clear()
-        items.addAll(newItems)
-        diff.dispatchUpdatesTo(this)
+    class VH(view: View) : RecyclerView.ViewHolder(view) {
+        val root: MaterialCardView = view.findViewById(R.id.tileRoot)
+        val name: TextView = view.findViewById(R.id.tvSpeciesName)
+        val count: TextView = view.findViewById(R.id.tvSpeciesCount)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
@@ -46,18 +28,22 @@ class SpeciesTileAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val item = items[position]
-        holder.tvName.text = displayNameOf(item.speciesCanonical) // <-- weergavenaam
-        holder.tvCount.text = item.count.toString()
 
-        holder.itemView.setOnClickListener {
-            onItemClick.invoke(item.speciesCanonical)
-        }
+        // In SoortSelectie: canonical tonen
+        holder.name.text = item.canonical
+        // Max 2 regels en ellipsize zijn in XML gezet; hieronder enkel defensief
+        holder.name.maxLines = 2
+
+        // Count verbergen in selectie-scherm
+        holder.count.visibility = View.GONE
+
+        holder.root.setOnClickListener { onClick(item) }
     }
 
-    override fun getItemCount() = items.size
+    override fun getItemCount(): Int = items.size
 
-    class VH(view: View) : RecyclerView.ViewHolder(view) {
-        val tvName: TextView = view.findViewById(R.id.tvSpeciesName)
-        val tvCount: TextView = view.findViewById(R.id.tvSpeciesCount)
+    fun submitList(newItems: List<SpeciesTile>) {
+        items = newItems
+        notifyDataSetChanged()
     }
 }

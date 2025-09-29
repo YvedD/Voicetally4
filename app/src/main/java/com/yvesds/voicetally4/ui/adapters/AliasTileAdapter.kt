@@ -1,7 +1,12 @@
 package com.yvesds.voicetally4.ui.adapters
 
+import android.os.Build
+import android.text.Layout
+import android.text.TextUtils
+import android.util.TypedValue
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import androidx.core.widget.TextViewCompat
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
@@ -10,10 +15,10 @@ import com.yvesds.voicetally4.databinding.ItemAliasTileBinding
 import com.yvesds.voicetally4.ui.data.SoortAlias
 
 /**
- * Snelle, GC-arme tile-adapter:
- * - ListAdapter + DiffUtil met stableIds
- * - Reused click-listener per ViewHolder (geen alloc per bind)
- * - Payloads voor snelle (de)selectie zonder volledige herbind
+ * Tile-adapter voor soortselectie:
+ * - Selectie blijft keyed op tileName (zoals voorheen)
+ * - Weergave = CANONICAL (gevraagd gedrag)
+ * - 2 regels + ellipsize + autosize
  */
 class AliasTileAdapter(
     private val isSelected: (String) -> Boolean, // key = tileName
@@ -21,7 +26,6 @@ class AliasTileAdapter(
 ) : ListAdapter<SoortAlias, AliasTileAdapter.VH>(DIFF) {
 
     companion object {
-        /** Gebruik een object i.p.v. Int om boxing/equals-kosten te vermijden en === te kunnen gebruiken. */
         private object PayloadSelection
 
         private val DIFF = object : DiffUtil.ItemCallback<SoortAlias>() {
@@ -32,13 +36,10 @@ class AliasTileAdapter(
                 oldItem == newItem
         }
 
-        /**
-         * Stabiele 64-bit hash (FNV-1a) voor minder kans op botsingen dan String.hashCode().
-         * Let op: we gebruiken de gesigneerde representatie van de 64-bit offset/prime.
-         */
+        /** Stabiele 64-bit FNV-1a hash op key (tileName), identiek aan je vorige aanpak. */
         private fun stableIdFromKey(key: String): Long {
-            var hash = -3750763034362895579L          // 0xcbf29ce484222325 als signed long
-            val prime = 1099511628211L               // 0x00000100000001B3
+            var hash = -3750763034362895579L // 0xCBF29CE484222325 (signed long)
+            val prime = 1099511628211L       // 0x00000100000001B3
             for (ch in key) {
                 hash = hash xor ch.code.toLong()
                 hash *= prime
@@ -56,20 +57,32 @@ class AliasTileAdapter(
         private val btn: MaterialButton = binding.btnTile
 
         init {
-            // Eén listener per ViewHolder; we lezen item via bindingAdapterPosition
+            // Eén listener per ViewHolder
             btn.setOnClickListener {
                 val pos = bindingAdapterPosition
                 if (pos == RecyclerView.NO_POSITION) return@setOnClickListener
                 val item = getItem(pos)
-                onToggle(item.tileName)
-                // Vraag snelle rebind van enkel de selectie-state
+                onToggle(item.tileName) // selectie blijft op tileName
                 this@AliasTileAdapter.notifyItemChanged(pos, PayloadSelection)
             }
+
+            // Tekstinstellingen (eenmalig per holder)
+            btn.isAllCaps = false
+            btn.maxLines = 2
+            btn.ellipsize = TextUtils.TruncateAt.END
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                btn.breakStrategy = Layout.BREAK_STRATEGY_BALANCED
+                btn.hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
+            }
+            // Uniform autosize 12–18sp
+            TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
+                btn, 12, 18, 1, TypedValue.COMPLEX_UNIT_SP
+            )
         }
 
         fun bindFull(item: SoortAlias) = with(btn) {
-            // Tekst op tile = kolom 2 (tileName)
-            text = item.tileName
+            // **Weergave = canonical**, volgens jouw wens
+            text = item.canonical
             isChecked = isSelected(item.tileName)
         }
 
@@ -80,7 +93,7 @@ class AliasTileAdapter(
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val binding = ItemAliasTileBinding.inflate(
-            LayoutInflater.from(parent.context), parent, /* attachToRoot = */ false
+            LayoutInflater.from(parent.context), parent, false
         )
         return VH(binding)
     }

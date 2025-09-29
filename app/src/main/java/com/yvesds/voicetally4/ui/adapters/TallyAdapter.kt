@@ -22,6 +22,7 @@ class TallyAdapter(
                 oldItem.name == newItem.name && oldItem.count == newItem.count
 
             override fun getChangePayload(oldItem: TallyItem, newItem: TallyItem): Any? {
+                // small, cheap partial update wanneer alleen de count wijzigt
                 return if (oldItem.name == newItem.name && oldItem.count != newItem.count) {
                     PAYLOAD_COUNT
                 } else null
@@ -35,7 +36,6 @@ class TallyAdapter(
     }
 
     inner class VH(val binding: ItemSpeciesTileVt4Binding) : RecyclerView.ViewHolder(binding.root) {
-
         init {
             binding.tileRoot.setOnClickListener {
                 val pos = bindingAdapterPosition
@@ -57,7 +57,9 @@ class TallyAdapter(
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val binding = ItemSpeciesTileVt4Binding.inflate(
-            LayoutInflater.from(parent.context), parent, false
+            LayoutInflater.from(parent.context),
+            parent,
+            false
         )
         return VH(binding)
     }

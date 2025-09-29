@@ -25,9 +25,9 @@ import kotlinx.coroutines.launch
 import kotlin.math.max
 
 /**
- * Tellers als tiles (zonder +/-/reset op de tile):
- * tik op tile => later detail-popup of -scherm.
- * Namen komen uit UnifiedAliasStore (tileName), niet uit canonical.
+ * Tellers als tiles:
+ * - tik op tile => later detail-scherm voor volledige waarneming (nu enkel log/Toast).
+ * - Namen komen uit UnifiedAliasStore (tileName). Telling per canonical in VM.
  */
 class TallyScherm : Fragment() {
 
@@ -53,7 +53,7 @@ class TallyScherm : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Log venster
+        // Log-venster
         logAdapter = SpeechLogAdapter()
         binding.recyclerViewSpeechLog.apply {
             layoutManager = LinearLayoutManager(requireContext())
@@ -62,7 +62,7 @@ class TallyScherm : Fragment() {
         }
         logAdapter.setAll(listOf("ℹ️ Klaar voor telling…"))
 
-        // Tiles in grid
+        // Grid voor tiles
         val spanCount = calculateAutoSpanCount(
             resources.displayMetrics,
             binding.tallyRoot.paddingStart + binding.tallyRoot.paddingEnd,
@@ -74,7 +74,7 @@ class TallyScherm : Fragment() {
         binding.recyclerViewTally.setHasFixedSize(true)
         binding.recyclerViewTally.itemAnimator = null
         binding.recyclerViewTally.setItemViewCacheSize(128)
-        binding.recyclerViewTally.addOnLayoutChangeListener { v, l, t, r, b, ol, ot, orr, ob ->
+        binding.recyclerViewTally.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, orr, ob ->
             val wChanged = (r - l) != (orr - ol)
             val hChanged = (b - t) != (ob - ot)
             if (wChanged || hChanged) recalcSpanCount()
@@ -83,14 +83,14 @@ class TallyScherm : Fragment() {
 
         tallyAdapter = TallyAdapter(
             onTileClick = { speciesId ->
-                // Later: open jouw detail-dialoog of -scherm
+                // TODO: open detail-scherm voor manuele invoer / correctie.
                 logAdapter.add("ℹ️ Details voor $speciesId")
                 Toast.makeText(requireContext(), "Details voor $speciesId", Toast.LENGTH_SHORT).show()
             }
         )
         binding.recyclerViewTally.adapter = tallyAdapter
 
-        // Koppel Shared → Tally (blijft zoals voorheen)
+        // Shared selectie → Tally VM
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
@@ -108,7 +108,7 @@ class TallyScherm : Fragment() {
             }
         }
 
-        // Items rechtstreeks doorzetten naar adapter (geen reflectie)
+        // Items naar adapter
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
