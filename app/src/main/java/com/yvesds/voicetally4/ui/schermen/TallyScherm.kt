@@ -6,6 +6,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import androidx.core.os.bundleOf
 import androidx.core.view.doOnLayout
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
@@ -13,11 +14,14 @@ import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.yvesds.voicetally4.R
 import com.yvesds.voicetally4.databinding.FragmentTallySchermBinding
 import com.yvesds.voicetally4.ui.adapters.SpeechLogAdapter
 import com.yvesds.voicetally4.ui.adapters.TallyAdapter
+import com.yvesds.voicetally4.ui.adapters.TallyItem
 import com.yvesds.voicetally4.ui.shared.SharedSpeciesViewModel
 import com.yvesds.voicetally4.ui.tally.TallyViewModel
 import kotlinx.coroutines.flow.collectLatest
@@ -26,8 +30,7 @@ import kotlin.math.max
 
 /**
  * Tellers als tiles:
- * - tik op tile => later detail-scherm voor volledige waarneming (nu enkel log/Toast).
- * - Namen komen uit UnifiedAliasStore (tileName). Telling per canonical in VM.
+ * - tik op tile => open detail-scherm voor manuele invoer/correctie.
  */
 class TallyScherm : Fragment() {
 
@@ -39,12 +42,11 @@ class TallyScherm : Fragment() {
 
     private lateinit var tallyAdapter: TallyAdapter
     private lateinit var logAdapter: SpeechLogAdapter
+
     private var gridLayoutManager: GridLayoutManager? = null
 
     override fun onCreateView(
-        inflater: LayoutInflater,
-        container: ViewGroup?,
-        savedInstanceState: Bundle?,
+        inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?,
     ): View {
         _binding = FragmentTallySchermBinding.inflate(inflater, container, false)
         return binding.root
@@ -82,10 +84,18 @@ class TallyScherm : Fragment() {
         binding.recyclerViewTally.doOnLayout { recalcSpanCount() }
 
         tallyAdapter = TallyAdapter(
-            onTileClick = { speciesId ->
-                // TODO: open detail-scherm voor manuele invoer / correctie.
-                logAdapter.add("ℹ️ Details voor $speciesId")
-                Toast.makeText(requireContext(), "Details voor $speciesId", Toast.LENGTH_SHORT).show()
+            onTileClick = { speciesId: String, displayName: String, currentCount: String ->
+                val args = bundleOf(
+                    "mode" to "create",
+                    "soortid" to speciesId,
+                    "canonicalName" to displayName, // voor nu gebruiken we display als titel
+                    "currentCount" to currentCount,
+                    "_id" to "" // leeg in create
+                )
+                findNavController().navigate(
+                    R.id.action_tallyScherm_to_waarnemingDetailScherm,
+                    args
+                )
             }
         )
         binding.recyclerViewTally.adapter = tallyAdapter
@@ -112,7 +122,7 @@ class TallyScherm : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
-                    tallyVm.items.collectLatest { list ->
+                    tallyVm.items.collectLatest { list: List<TallyItem> ->
                         tallyAdapter.submitList(list)
                     }
                 }
@@ -121,7 +131,7 @@ class TallyScherm : Fragment() {
 
         // Knoppen
         binding.buttonEndSession.setOnClickListener {
-            logAdapter.add("💾 Save: nog te koppelen aan export/resultaten.")
+            logAdapter.add(" Save: nog te koppelen aan export/resultaten.")
             Toast.makeText(requireContext(), "Opslaan komt er aan…", Toast.LENGTH_SHORT).show()
         }
         binding.buttonAddSpecies.setOnClickListener {

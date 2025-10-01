@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- geselecteerd: vul met dezelfde kleur als tegelrand (primary) -->
+    <item android:state_checked="true" android:color="?attr/colorPrimary"/>
+    <!-- normaal: oppervlakkleur -->
+    <item android:color="?attr/colorSurface"/>
+</selector>

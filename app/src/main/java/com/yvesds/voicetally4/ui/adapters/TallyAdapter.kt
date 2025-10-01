@@ -8,7 +8,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.yvesds.voicetally4.databinding.ItemSpeciesTileVt4Binding
 
 class TallyAdapter(
-    private val onTileClick: (speciesId: String) -> Unit
+    private val onTileClick: (speciesId: String, displayName: String, currentCount: String) -> Unit
 ) : ListAdapter<TallyItem, TallyAdapter.VH>(DIFF) {
 
     companion object {
@@ -41,15 +41,13 @@ class TallyAdapter(
                 val pos = bindingAdapterPosition
                 if (pos == RecyclerView.NO_POSITION) return@setOnClickListener
                 val item = getItem(pos)
-                onTileClick(item.speciesId)
+                onTileClick(item.speciesId, item.name, item.count.toString())
             }
         }
-
         fun bindFull(item: TallyItem) = with(binding) {
             tvSpeciesName.text = item.name
             tvSpeciesCount.text = item.count.toString()
         }
-
         fun bindCountOnly(item: TallyItem) = with(binding) {
             tvSpeciesCount.text = item.count.toString()
         }
@@ -57,9 +55,7 @@ class TallyAdapter(
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val binding = ItemSpeciesTileVt4Binding.inflate(
-            LayoutInflater.from(parent.context),
-            parent,
-            false
+            LayoutInflater.from(parent.context), parent, false
         )
         return VH(binding)
     }
@@ -76,8 +72,7 @@ class TallyAdapter(
         }
     }
 
-    override fun getItemId(position: Int): Long =
-        getItem(position).speciesId.hashCode().toLong()
+    override fun getItemId(position: Int): Long = getItem(position).speciesId.hashCode().toLong()
 }
 
 data class TallyItem(

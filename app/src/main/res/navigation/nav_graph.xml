@@ -40,7 +40,6 @@
         android:name="com.yvesds.voicetally4.ui.schermen.SoortSelectieScherm"
         android:label="Soortselectie"
         tools:layout="@layout/fragment_soort_selectie_scherm">
-        <!-- FIX: actie hoort bij het bron-fragment -->
         <action
             android:id="@+id/action_soortSelectieScherm_to_tallyScherm"
             app:destination="@id/tallyScherm" />
@@ -50,5 +49,16 @@
         android:id="@+id/tallyScherm"
         android:name="com.yvesds.voicetally4.ui.schermen.TallyScherm"
         android:label="Telling"
-        tools:layout="@layout/fragment_tally_scherm" />
+        tools:layout="@layout/fragment_tally_scherm">
+        <action
+            android:id="@+id/action_tallyScherm_to_waarnemingDetailScherm"
+            app:destination="@id/waarnemingDetailScherm" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/waarnemingDetailScherm"
+        android:name="com.yvesds.voicetally4.ui.schermen.WaarnemingDetailScherm"
+        android:label="Waarneming"
+        tools:layout="@layout/fragment_waarneming_detail_scherm" />
+
 </navigation>

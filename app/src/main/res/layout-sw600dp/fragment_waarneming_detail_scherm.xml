@@ -1,0 +1,552 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/rootCard"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:layout_margin="12dp"
+    app:cardUseCompatPadding="true"
+    app:strokeColor="?attr/colorPrimary"
+    app:strokeWidth="1dp">
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:id="@+id/content"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <!-- HEADER: Canonical + tijd -->
+            <LinearLayout
+                android:id="@+id/headerRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/tvCanonicalName"
+                    style="@style/TextAppearance.Material3.HeadlineSmall"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:paddingEnd="12dp"
+                    android:text="Canonieke soortnaam"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:id="@+id/timePickers"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilHour"
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                        android:layout_width="80dp"
+                        android:layout_height="wrap_content"
+                        android:hint="Uur">
+                        <androidx.appcompat.widget.AppCompatSpinner
+                            android:id="@+id/spHour"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:spinnerMode="dropdown" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/tvTimeColon"
+                        style="@style/TextAppearance.Material3.TitleLarge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:text=":" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilMinute"
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                        android:layout_width="80dp"
+                        android:layout_height="wrap_content"
+                        android:hint="Min">
+                        <androidx.appcompat.widget.AppCompatSpinner
+                            android:id="@+id/spMinute"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:spinnerMode="dropdown" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- AANTELLERS: labels volgen seizoensrichting -->
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/sectionCounts"
+                style="@style/TextAppearance.Material3.TitleSmall"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp"
+                android:text="Aantellers" />
+
+            <!-- Rij 1: Hoofdrichting (NO/ZW) -->
+            <LinearLayout
+                android:id="@+id/rowAantal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingBottom="8dp">
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/lblAantal"
+                    style="@style/TextAppearance.Material3.BodyLarge"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="NO" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/tilAantal"
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                    android:layout_width="120dp"
+                    android:layout_height="wrap_content">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etAantal"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:inputType="number"
+                        android:maxLines="1"
+                        android:text="0" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAantalPlus"
+                    style="@style/VoiceTally.TappableButton.Filled"
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:text="+"
+                    android:textAllCaps="false" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAantalMin"
+                    style="@style/VoiceTally.TappableButton"
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:text="-"
+                    android:textAllCaps="false" />
+            </LinearLayout>
+
+            <!-- Rij 2: Tegenrichting (ZW/NO) -->
+            <LinearLayout
+                android:id="@+id/rowAantalTerug"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingBottom="8dp">
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/lblAantalTerug"
+                    style="@style/TextAppearance.Material3.BodyLarge"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="ZW" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/tilAantalTerug"
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                    android:layout_width="120dp"
+                    android:layout_height="wrap_content">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etAantalTerug"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:inputType="number"
+                        android:maxLines="1"
+                        android:text="0" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAantalTerugPlus"
+                    style="@style/VoiceTally.TappableButton.Filled"
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:text="+"
+                    android:textAllCaps="false" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAantalTerugMin"
+                    style="@style/VoiceTally.TappableButton"
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:text="-"
+                    android:textAllCaps="false" />
+            </LinearLayout>
+
+            <!-- Rij 3: Lokaal -->
+            <LinearLayout
+                android:id="@+id/rowLokaal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/lblLokaal"
+                    style="@style/TextAppearance.Material3.BodyLarge"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Lokaal" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/tilLokaal"
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                    android:layout_width="120dp"
+                    android:layout_height="wrap_content">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etLokaal"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:inputType="number"
+                        android:maxLines="1"
+                        android:text="0" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnLokaalPlus"
+                    style="@style/VoiceTally.TappableButton.Filled"
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:text="+"
+                    android:textAllCaps="false" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnLokaalMin"
+                    style="@style/VoiceTally.TappableButton"
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:text="-"
+                    android:textAllCaps="false" />
+            </LinearLayout>
+
+            <!-- MARKERING -->
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/sectionMarkering"
+                style="@style/TextAppearance.Material3.TitleSmall"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="16dp"
+                android:paddingBottom="8dp"
+                android:text="Markering" />
+
+            <LinearLayout
+                android:id="@+id/markingRow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/cbMarkeerTrek"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="trek" />
+
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/cbMarkeerLokaal"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="18dp"
+                    android:text="lokaal" />
+            </LinearLayout>
+
+            <!-- ATTRIBUTEN: 4 kolommen -->
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/sectionAttributes"
+                style="@style/TextAppearance.Material3.TitleSmall"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="16dp"
+                android:paddingBottom="8dp"
+                android:text="Attributen" />
+
+            <GridLayout
+                android:id="@+id/attributesFourCols"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:columnCount="4"
+                android:useDefaultMargins="true">
+
+                <!-- koppen -->
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/lblLeeftijd"
+                    style="@style/TextAppearance.Material3.TitleSmall"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_columnWeight="1"
+                    android:text="Leeftijd" />
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/lblGeslacht"
+                    style="@style/TextAppearance.Material3.TitleSmall"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_columnWeight="1"
+                    android:text="Geslacht" />
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/lblKleed"
+                    style="@style/TextAppearance.Material3.TitleSmall"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_columnWeight="1"
+                    android:text="Kleed" />
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/lblLocatie"
+                    style="@style/TextAppearance.Material3.TitleSmall"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_columnWeight="1"
+                    android:text="Locatie" />
+
+                <!-- kolom 1: leeftijd -->
+                <LinearLayout
+                    android:id="@+id/colLeeftijd"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_columnWeight="1"
+                    android:orientation="vertical"
+                    android:paddingBottom="8dp">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLeeftijdAdult"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="adult" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLeeftijdJuv"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="juveniel" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLeeftijdGt1kj"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text=">1kj" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLeeftijd1kj"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="1kj" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLeeftijd2kj"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="2kj" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLeeftijd3kj"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="3kj" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLeeftijd4kj"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="4kj" />
+                </LinearLayout>
+
+                <!-- kolom 2: geslacht -->
+                <LinearLayout
+                    android:id="@+id/colGeslacht"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_columnWeight="1"
+                    android:orientation="vertical"
+                    android:paddingBottom="8dp">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnGeslachtMan"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="man" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnGeslachtVrouw"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="vrouw" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnGeslachtOnbekend"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="onbek." />
+                </LinearLayout>
+
+                <!-- kolom 3: kleed -->
+                <LinearLayout
+                    android:id="@+id/colKleed"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_columnWeight="1"
+                    android:orientation="vertical"
+                    android:paddingBottom="8dp">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnKleedZomer"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="zomer" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnKleedWinter"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="winter" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnKleedIntermediair"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="interm." />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnKleedLicht"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="licht" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnKleedDonker"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="donker" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnKleedEclips"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="eclips" />
+                </LinearLayout>
+
+                <!-- kolom 4: locatie -->
+                <LinearLayout
+                    android:id="@+id/colLocatie"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_columnWeight="1"
+                    android:orientation="vertical"
+                    android:paddingBottom="8dp">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLocZee"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="zee" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLocBranding"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="branding" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLocDuinen"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="duinen" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLocCampings"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="campings" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLocPolders"
+                        style="@style/VoiceTally.TappableButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="polders" />
+                </LinearLayout>
+
+            </GridLayout>
+
+            <!-- ACTIES -->
+            <LinearLayout
+                android:id="@+id/actionsRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="end"
+                android:orientation="horizontal"
+                android:paddingTop="20dp">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnSaveRecord"
+                    style="@style/VoiceTally.TappableButton.Filled"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Save" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnCancel"
+                    style="@style/VoiceTally.TappableButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:text="Annuleren" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnDeleteRecord"
+                    style="@style/VoiceTally.TappableButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:text="Delete" />
+            </LinearLayout>
+
+            <Space
+                android:layout_width="match_parent"
+                android:layout_height="16dp" />
+
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+</com.google.android.material.card.MaterialCardView>
